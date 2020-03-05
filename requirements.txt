@@ -4,3 +4,8 @@ pytube3
 torch==1.4
 torchvision
 numpy
+tensorflow-gpu==1.14
+tensorboard
+tensorboardX
+tf_slim
+matplotlib
