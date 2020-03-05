@@ -50,11 +50,12 @@ def run_optical_flow(video_file, out_dir, pid=0):
     video_file = os.path.abspath(video_file)
     assert os.path.exists(video_file)
     device = pid % N_GPUS
-    image_dir = os.path.abspath(os.path.join(out_dir, 'image'))
-    flow_x_dir = os.path.abspath(os.path.join(out_dir, 'flow-x'))
-    flow_y_dir = os.path.abspath(os.path.join(out_dir, 'flow-y'))
+    image_prefix = os.path.abspath(os.path.join(out_dir, 'image'))
+    flowx_prefix = os.path.abspath(os.path.join(out_dir, 'flowx'))
+    flowy_prefix = os.path.abspath(os.path.join(out_dir, 'flowy'))
+
     cmd = EXTRACT_OPTICAL_FLOW_PRGM + ' -f={0} -x={1} -y={2} -i={3} -b=20 -t=1 -d={4} -s=1 -o=dir -w=340 -h=256'\
-        .format(quote(video_file), quote(flow_x_dir), quote(flow_y_dir), quote(image_dir), device)
+        .format(video_file, flowx_prefix, flowy_prefix, image_prefix, device)
     os.system(cmd)
     print('{0}/{1} {2} done'.format(pid, N_FILES, video_file))
     sys.stdout.flush()
@@ -88,8 +89,8 @@ def run_optical_flow(video_file, out_dir, pid=0):
 
 def _parse_args():
     parser = argparse.ArgumentParser(description="extract optical flows")
-    parser.add_argument("--data", choices=['activitynet', 'kinetics'], required=True)
-    parser.add_argument('--n_workers', default=16, type=int)
+    parser.add_argument("--data", default='activitynet', choices=['activitynet', 'kinetics'])
+    parser.add_argument('--n_workers', default=40, type=int)
     parser.add_argument('--flow_type', default='tvl1', type=str, choices=['tvl1', 'warp_tvl1'])
     parser.add_argument("--n_gpu", type=int, default=torch.cuda.device_count(), help='number of GPU')
     return parser.parse_args()
