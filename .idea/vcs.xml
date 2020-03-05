@@ -2,5 +2,8 @@
 <project version="4">
   <component name="VcsDirectoryMappings">
     <mapping directory="$PROJECT_DIR$" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/src/third_party/dense_flow" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/src/third_party/dense_flow/include/CLUE" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/src/third_party/dense_flow/include/easylogging++" vcs="Git" />
   </component>
 </project>
