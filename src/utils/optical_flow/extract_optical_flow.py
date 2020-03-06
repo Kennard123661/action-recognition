@@ -2,16 +2,15 @@ import argparse
 import os
 import sys
 import torch
-from pipes import quote
 import numpy as np
-from multiprocessing import Pool, current_process
+from multiprocessing import Pool
 
 N_GPUS = 1
 if __name__ == '__main__':
     BASE_DIR = os.path.join(os.path.dirname(__file__), '..')
     sys.path.append(BASE_DIR)
-
-DENSEFLOW_DIR = os.path.join(os.path.dirname(__file__), '..', 'third_party', 'dense_flow', 'build')
+from config import ROOT_DIR
+DENSEFLOW_DIR = os.path.join(ROOT_DIR, 'third_party', 'dense_flow', 'build')
 EXTRACT_OPTICAL_FLOW_PRGM = os.path.join(DENSEFLOW_DIR, 'extract_gpu')
 N_FILES = 0
 
@@ -103,10 +102,12 @@ def main():
         extracted_dir = anet.EXTRACTED_DIR
     else:
         raise NotImplementedError
-    global N_GPUS
-    N_GPUS = args.n_gpu
+    extracted_dir = os.path.join(extracted_dir, 'opencv-gpu')
     if not os.path.exists(extracted_dir):
         os.makedirs(extracted_dir)
+
+    global N_GPUS
+    N_GPUS = args.n_gpu
 
     videos = os.listdir(video_dir)
     processed_videos = os.listdir(extracted_dir)

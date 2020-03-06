@@ -8,3 +8,4 @@ tensorflow-gpu==1.14
 tensorboard
 tensorboardX
 matplotlib
+scipy

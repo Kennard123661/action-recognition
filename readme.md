@@ -10,6 +10,16 @@ conda activate action-recognition
 pip install -r requirements.txt
 ```
 
+### Downloading Video Codecs
+
+```bash
+sudo apt update
+sudo apt install libdvdnav4 libdvdread4 gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly libdvd-pkg
+sudo dpkg-reconfigure libdvd-pkg
+sudo apt install ubuntu-restricted-extras
+conda install -c conda-forge ffmpeg
+```
+
 ### Datasets
 
 #### Kinetics
