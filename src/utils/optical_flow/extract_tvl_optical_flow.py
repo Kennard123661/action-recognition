@@ -102,7 +102,7 @@ def main():
         extracted_dir = anet.EXTRACTED_DIR
     else:
         raise NotImplementedError
-    extracted_dir = os.path.join(extracted_dir, 'opencv-gpu')
+    extracted_dir = os.path.join(extracted_dir, 'tvl-flow')
     if not os.path.exists(extracted_dir):
         os.makedirs(extracted_dir)
 
