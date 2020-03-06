@@ -1,5 +1,11 @@
+import os
 import tensorflow as tf
 import tensorflow.contrib.slim as slim
+
+from nets.optical_flow import PRETRAINED_FLOW_MODEL_DIR
+SELFLOW_PRETRAINED_DIR = os.path.join(PRETRAINED_FLOW_MODEL_DIR, 'selflow')
+SINTEL_PRETRAINED_DIR = os.path.join(SELFLOW_PRETRAINED_DIR, 'sintel')
+KITTI_PRETRAINED_DIR = os.path.join(SELFLOW_PRETRAINED_DIR, 'kitti')
 
 
 def flow_resize(flow, out_size, is_scale=True, method=0):
