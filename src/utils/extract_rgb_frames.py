@@ -1,21 +1,34 @@
 import argparse
 import os
 import numpy as np
-import multiprocessing
+import cv2
+from p_tqdm import p_map
 
 import data.activitynet as anet
 import data.breakfast as breakfast
-import data.kinetics400 as kinetics
 
 N_PROCESSED = 0
 
 
 def _extract_video_frames(video_file, image_dir, n_frame_file):
-    raise NotImplementedError
+    if not os.path.exists(image_dir):
+        os.makedirs(image_dir)
+
+    cap = cv2.VideoCapture(video_file)
+    n_frames = 0
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if ret:
+            out_file = os.path.join(image_dir, '{0:06d}.jpg'.format(n_frames))
+            cv2.imwrite(out_file, frame)
+            n_frames += 1
+        else:
+            break
+    np.save(n_frame_file, n_frames)
 
 
 def _extract_dataset_frames(video_files, extracted_image_dirs, n_frame_files, n_workers):
-    pass
+    p_map(_extract_video_frames, video_files, extracted_image_dirs, n_frame_files, num_cpus=n_workers)
 
 
 def _parse_args():
@@ -55,7 +68,9 @@ def main():
     video_files = [os.path.join(video_dir, video) for video in videos]
     extracted_image_dirs = [os.path.join(extracted_image_dir, video) for video in videos]
     n_frame_files = [os.path.join(n_video_frames_dir, video + '.npy') for video in videos]
-    _extract_dataset_frames()
+
+    print('INFO: extracting images from {0} {1} dataset videos'.format(len(video_files), args.data))
+    _extract_dataset_frames(video_files, extracted_image_dirs, n_frame_files, args.n_workers)
 
 
 if __name__ == '__main__':

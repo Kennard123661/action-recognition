@@ -9,3 +9,5 @@ tensorboard
 tensorboardX
 matplotlib
 scipy
+opencv-python
+p_tqdm
