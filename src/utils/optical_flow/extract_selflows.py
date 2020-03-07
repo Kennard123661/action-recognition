@@ -13,12 +13,12 @@ if __name__ == '__main___':
     base_dir = os.path.join(os.path.dirname(__file__), '..', '..')
     sys.path.append(base_dir)
 
+from config import ROOT_DIR
 from nets.optical_flow.selflow import flow_resize, pyramid_processing
 import nets.optical_flow.selflow as selflow
 import data.activitynet as anet
 import data.breakfast as breakfast
 import data.kinetics400 as kinetics
-from config import ROOT_DIR
 
 
 def mvn(img):
@@ -207,6 +207,7 @@ def _parse_args():
     parser.add_argument("--n_gpu", type=int, default=torch.cuda.device_count(), help='number of GPU')
     parser.add_argument('--batch_size', type=int, default=4, help='batch size')
     parser.add_argument('--gpu', type=int, required=True)
+    parser.add_argument('--gpu', type=int, required=True)
     return parser.parse_args()
 
 
@@ -235,7 +236,15 @@ def main():
         os.makedirs(selflow_out_dir)
 
     # find videos that have not been processed
-    videos = os.listdir(extracted_images_dir)
+    videos = sorted(os.listdir(extracted_images_dir))
+
+    if ROOT_DIR == '/mnt/BigData/cs5242-project':
+        args.n_gpu = 3
+        if args.gpu == 2:
+            args.gpu = 3
+    os.environ['CUDA_VISIBLE_DEVICES'] = str(args.gpu)
+    videos = [video for i, video in enumerate(videos) if (i % args.n_gpu) == args.gpu]
+
     video_selflow_dirs = [os.path.join(selflow_out_dir, video) for video in videos]
     n_frame_files = [os.path.join(n_frames_dir, video + '.npy') for video in videos]
     processed_videos = []
@@ -243,7 +252,7 @@ def main():
         if os.path.exists(dirname):
             n_flow_files = len(os.listdir(dirname))
             n_frames = np.load(n_frame_files[i])
-            if n_flow_files != n_frames:
+            if n_flow_files != n_frames*4:
                 assert n_flow_files <= n_frames
             else:
                 processed_videos.append(videos[i])
