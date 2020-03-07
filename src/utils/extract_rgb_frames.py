@@ -4,6 +4,11 @@ import numpy as np
 import cv2
 from p_tqdm import p_map
 
+if __name__ == '__main__':
+    import sys
+    base_dir = os.path.join(os.path.dirname(__file__), '..')
+    sys.path.append(base_dir)
+
 import data.activitynet as anet
 import data.breakfast as breakfast
 
