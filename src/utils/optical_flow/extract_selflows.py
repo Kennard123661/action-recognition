@@ -1,8 +1,9 @@
-from __future__ import division, print_function, absolute_import
+from __future__ import division, print_function, absolute_importselflownetselflownet
 import torch
 import tensorflow as tf
 import numpy as np
 import os
+import math
 import argparse
 import cv2
 from tqdm import tqdm
@@ -111,8 +112,7 @@ class BasicDataset(object):
         data_list = tf.convert_to_tensor(data_list, dtype=tf.string)
         dataset = tf.data.Dataset.from_tensor_slices(data_list)
         dataset = dataset.map(self.preprocess_one_shot, num_parallel_calls=num_parallel_calls)
-        dataset = dataset.batch(1)
-        dataset = dataset.repeat()
+        dataset = dataset.batch(self.batch_size)
         iterator = dataset.make_initializable_iterator()
         return iterator
 
@@ -142,13 +142,13 @@ def _flow_to_color(flow, mask=None, max_flow=None):
     return im * mask
 
 
-def _extract_optical_flow(image_dirs, out_dirs, model_ckpt, batch_size=8, n_workers=4, n_gpus=1, cpu_device='/cpu:0'):
+def _extract_optical_flow(image_dirs, out_dirs, model_ckpt, batch_size=4, n_workers=4, n_gpus=1, cpu_device='/cpu:0'):
     batch_size = int(batch_size)
     n_workers = int(n_workers)
     n_gpus = int(n_gpus)
     shared_device = '/gpu:0' if n_gpus == 1 else cpu_device
 
-    dataset = BasicDataset(image_dirs=image_dirs, out_dirs=out_dirs)
+    dataset = BasicDataset(image_dirs=image_dirs, out_dirs=out_dirs, batch_size=batch_size)
     out_fids = dataset.out_fids
 
     iterator = dataset.create_one_shot_iterator(dataset.file_queues, num_parallel_calls=n_workers)
@@ -178,14 +178,18 @@ def _extract_optical_flow(image_dirs, out_dirs, model_ckpt, batch_size=8, n_work
     sess.run(tf.global_variables_initializer())
     sess.run(iterator.initializer)
     saver.restore(sess, model_ckpt)
-    for i in tqdm(range(dataset.n_data)):
+
+    n_iterations = math.ceil(dataset.n_data / batch_size)
+    for i in tqdm(range(n_iterations)):
         np_flow_fw, np_flow_bw, np_flow_fw_color, np_flow_bw_color = \
             sess.run([flow_fw['full_res'], flow_bw['full_res'], flow_fw_color, flow_bw_color])
-        save_dir, out_fid = os.path.split(out_fids[i])
-        cv2.imwrite(os.path.join(save_dir, 'flow_fw_color_{}.png'.format(out_fid)), np_flow_fw_color[0])
-        cv2.imwrite(os.path.join(save_dir, 'flow_bw_color_{}.png'.format(out_fid)), np_flow_bw_color[0])
-        write_flo(os.path.join(save_dir, 'flow_fw_{}.flo'.format(out_fid)), np_flow_fw[0])
-        write_flo(os.path.join(save_dir, 'flow_bw_{}.flo'.format(out_fid)), np_flow_bw[0])
+        batch_fids = out_fids[i*batch_size, min((i+1)*batch_size, dataset.n_data)]
+        for out_fid in batch_fids:
+            save_dir, fid = os.path.split(out_fid)
+            cv2.imwrite(os.path.join(save_dir, 'flow_fw_color_{}.png'.format(fid)), np_flow_fw_color[0])
+            cv2.imwrite(os.path.join(save_dir, 'flow_bw_color_{}.png'.format(fid)), np_flow_bw_color[0])
+            write_flo(os.path.join(save_dir, 'flow_fw_{}.flo'.format(fid)), np_flow_fw[0])
+            write_flo(os.path.join(save_dir, 'flow_bw_{}.flo'.format(fid)), np_flow_bw[0])
 
 
 def _parse_args():
@@ -194,7 +198,7 @@ def _parse_args():
     parser.add_argument("--dataset", default='breakfast', choices=['breakfast', 'activitynet', 'kinetics'])
     parser.add_argument('--n_workers', default=4, type=int)
     parser.add_argument("--n_gpu", type=int, default=torch.cuda.device_count(), help='number of GPU')
-    parser.add_argument('--batch_size', type=int, default=8, help='batch size')
+    parser.add_argument('--batch_size', type=int, default=4, help='batch size')
     parser.add_argument('--device', type=int, required=True, help='batch size')
     return parser.parse_args()
 
@@ -240,9 +244,11 @@ def main():
             os.makedirs(dirname)
 
     # get videos that have been processed
-    videos = np.setdiff1d(videos, processed_videos).reshape(-1)  # remove videos that are already processed
-    video_selflow_dirs = [os.path.join(selflow_out_dir, video) for video in videos]
-    video_image_dirs = [os.path.join(extracted_images_dir, video) for video in videos]
+    # videos = np.setdiff1d(videos, processed_videos).reshape(-1)  # remove videos that are already processed
+    # video_selflow_dirs = [os.path.join(selflow_out_dir, video) for video in videos]
+    # video_image_dirs = [os.path.join(extracted_images_dir, video) for video in videos]
+    video_image_dirs = ['/home/kennardng/Downloads/test']
+    video_selflow_dirs = ['/home/kennardng/Downloads/selflow-test']
 
     _extract_optical_flow(video_image_dirs, video_selflow_dirs, model_ckpt=ckpt_file, batch_size=args.batch_size,
                           n_workers=args.n_workers, n_gpus=args.n_gpu)
