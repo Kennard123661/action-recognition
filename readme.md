@@ -69,3 +69,74 @@ cd dense_flow && mkdir build && cd build
 OpenCV_DIR=../../opencv-4.1.0/build/  cmake ..
 make -j
 ```
+
+#### Installing nvidia optical flow directory
+
+First, we install the dependencies for each of the following modules for compiling opencv from source.
+
+```bash
+sudo apt-get install build-essential 
+sudo apt-get install cmake git libgtk2.0-dev pkg-config libavcodec-dev libavformat-dev libswscale-dev
+
+# for images
+sudo apt-get install python3-dev libtbb2 libtbb-dev libjpeg-dev libpng-dev libtiff-dev libdc1394-22-dev
+
+# for videos
+sudo apt-get install libavcodec-dev libavformat-dev libswscale-dev libv4l-dev
+sudo apt-get install libxvidcore-dev libx264-dev
+
+# for GUI
+sudo apt-get install libgtk-3-dev
+
+# for optimization
+sudo apt-get install libatlas-base-dev gfortran pylint
+
+sudo apt-get install cmake-gui
+
+sudo apt-get install gcc-7 g++-7
+```
+
+```bash
+mkdir src/third_party && cd src/third_party
+wget -O OpenCV-4.2.0.zip wget https://github.com/opencv/opencv/archive/4.2.0.zip 
+unzip OpenCV-4.2.0.zip
+rm OpenCV-4.2.0.zip
+wget -O OpenCV_contrib-4.2.0.zip https://github.com/opencv/opencv_contrib/archive/4.2.0.zip
+unzip OpenCV_contrib-4.2.0.zip
+rm OpenCV_contrib-4.2.0.zip
+```
+
+From here, run the cmake-gui and set the source code to 
+`/mnt/Data/cs5242-project/action-recognition/src/third_party/opencv-4.2.0` and the build directory to 
+`/mnt/Data/cs5242-project/action-recognition/src/third_party/opencv-4.2.0/build` and click `Generate`. Then,  
+set `PYTHON3_EXECUTABLE=/home/kennardng/anaconda3/envs/action-recognition/bin/python3`, 
+`PYTHON3_INCLUDE_DIR=/home/kennardng/anaconda3/envs/action-recognition/include/python3.7m`
+`PYTHON3_LIBRARY=/home/kennardng/anaconda3/envs/action-recognition/lib/libpython3.7m.so`
+`PYTHON3_PACKAGES_PATH=/home/kennardng/anaconda3/envs/action-recognition/lib/python3.7/site-packages`
+`OPENCV_EXTRA_MODULES=/mnt/Data/cs5242-project/action-recognition/src/third_party/opencv_contrib-4.2.0/modules`
+`OPENCV_EXTRA_MODULES=/mnt/Data/cs5242-project/action-recognition/src/third_party/opencv_contrib-4.2.0/modules`
+`CMAKE_INSTALL_PREFIX=/home/kennardng/anaconda3/envs/action-recognition/local`. 
+`BUILD_opencv_xfeatures2d=0`
+Don't build xfeatures_2d, we don't need it
+Also, if your compiler is above gcc-8, then there will be some issues, I used `gcc-7` for installation and set
+```bash
+CUDA_HOST_COMPILER=/usr/bin/gcc-7
+```
+Remember to set numpy paths as well
+Then, press `Configure` and `Generate`. Once the scripts are generated, go to `third_party/opencv-4.2.0/build` and 
+use make 
+
+There are some issues during `make install`, refer to [here](https://answers.opencv.org/question/221827/a-installation-problem-of-opencvsolved/)
+
+
+## Extras
+
+### Exporting Conda environments
+```bash
+# exporting the environment
+conda env export > environment.yml
+
+# installing the new environment.
+conda env create -f environment.yml
+```
+
