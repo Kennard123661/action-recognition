@@ -5,14 +5,20 @@ import numpy as np
 import os
 import math
 import argparse
-import cv2
+import imageio
 from tqdm import tqdm
+
+if __name__ == '__main___':
+    import sys
+    base_dir = os.path.join(os.path.dirname(__file__), '..', '..')
+    sys.path.append(base_dir)
 
 from nets.optical_flow.selflow import flow_resize, pyramid_processing
 import nets.optical_flow.selflow as selflow
 import data.activitynet as anet
 import data.breakfast as breakfast
 import data.kinetics400 as kinetics
+from config import ROOT_DIR
 
 
 def mvn(img):
@@ -185,12 +191,12 @@ def _extract_optical_flow(image_dirs, out_dirs, model_ckpt, batch_size=4, n_work
         np_flow_fw, np_flow_bw, np_flow_fw_color, np_flow_bw_color = \
             sess.run([flow_fw['full_res'], flow_bw['full_res'], flow_fw_color, flow_bw_color])
         batch_fids = out_fids[i*batch_size:min((i+1)*batch_size, dataset.n_data)]
-        for out_fid in batch_fids:
+        for f, out_fid in enumerate(batch_fids):
             save_dir, fid = os.path.split(out_fid)
-            cv2.imwrite(os.path.join(save_dir, 'flow_fw_color_{}.png'.format(fid)), np_flow_fw_color[0])
-            cv2.imwrite(os.path.join(save_dir, 'flow_bw_color_{}.png'.format(fid)), np_flow_bw_color[0])
-            write_flo(os.path.join(save_dir, 'flow_fw_{}.flo'.format(fid)), np_flow_fw[0])
-            write_flo(os.path.join(save_dir, 'flow_bw_{}.flo'.format(fid)), np_flow_bw[0])
+            imageio.imsave(os.path.join(save_dir, 'flow_fw_color_{}.png'.format(fid)), np_flow_fw_color[f])
+            imageio.imsave(os.path.join(save_dir, 'flow_bw_color_{}.png'.format(fid)), np_flow_bw_color[f])
+            write_flo(os.path.join(save_dir, 'flow_fw_{}.flo'.format(fid)), np_flow_fw[f])
+            write_flo(os.path.join(save_dir, 'flow_bw_{}.flo'.format(fid)), np_flow_bw[f])
 
 
 def _parse_args():
@@ -200,7 +206,7 @@ def _parse_args():
     parser.add_argument('--n_workers', default=4, type=int)
     parser.add_argument("--n_gpu", type=int, default=torch.cuda.device_count(), help='number of GPU')
     parser.add_argument('--batch_size', type=int, default=4, help='batch size')
-    # parser.add_argument('--device', type=int, required=True, help='batch size')
+    parser.add_argument('--gpu', type=int, required=True)
     return parser.parse_args()
 
 
@@ -229,27 +235,25 @@ def main():
         os.makedirs(selflow_out_dir)
 
     # find videos that have not been processed
-    # videos = os.listdir(extracted_images_dir)
-    # video_selflow_dirs = [os.path.join(selflow_out_dir, video) for video in videos]
-    # n_frame_files = [os.path.join(n_frames_dir, video + '.npy') for video in videos]
-    # processed_videos = []
-    # for i, dirname in enumerate(video_selflow_dirs):
-    #     if os.path.exists(dirname):
-    #         n_flow_files = len(os.listdir(dirname))
-    #         n_frames = np.load(n_frame_files[i])
-    #         if n_flow_files != n_frames:
-    #             assert n_flow_files <= n_frames
-    #         else:
-    #             processed_videos.append(videos[i])
-    #     else:
-    #         os.makedirs(dirname)
+    videos = os.listdir(extracted_images_dir)
+    video_selflow_dirs = [os.path.join(selflow_out_dir, video) for video in videos]
+    n_frame_files = [os.path.join(n_frames_dir, video + '.npy') for video in videos]
+    processed_videos = []
+    for i, dirname in enumerate(video_selflow_dirs):
+        if os.path.exists(dirname):
+            n_flow_files = len(os.listdir(dirname))
+            n_frames = np.load(n_frame_files[i])
+            if n_flow_files != n_frames:
+                assert n_flow_files <= n_frames
+            else:
+                processed_videos.append(videos[i])
+        else:
+            os.makedirs(dirname)
 
     # get videos that have been processed
-    # videos = np.setdiff1d(videos, processed_videos).reshape(-1)  # remove videos that are already processed
-    # video_selflow_dirs = [os.path.join(selflow_out_dir, video) for video in videos]
-    # video_image_dirs = [os.path.join(extracted_images_dir, video) for video in videos]
-    video_image_dirs = ['/home/kennardngpoolhua/Downloads/test']
-    video_selflow_dirs = ['/home/kennardngpoolhua/Downloads/selflow-test']
+    videos = np.setdiff1d(videos, processed_videos).reshape(-1)  # remove videos that are already processed
+    video_selflow_dirs = [os.path.join(selflow_out_dir, video) for video in videos]
+    video_image_dirs = [os.path.join(extracted_images_dir, video) for video in videos]
 
     _extract_optical_flow(video_image_dirs, video_selflow_dirs, model_ckpt=ckpt_file, batch_size=args.batch_size,
                           n_workers=args.n_workers, n_gpus=args.n_gpu)
