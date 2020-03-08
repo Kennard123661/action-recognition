@@ -24,7 +24,7 @@ def _extract_video_frames(video_file, image_dir, n_frame_file):
     while cap.isOpened():
         ret, frame = cap.read()
         if ret:
-            out_file = os.path.join(image_dir, '{0:06d}.jpg'.format(n_frames))
+            out_file = os.path.join(image_dir, '{0:06d}.png'.format(n_frames))
             cv2.imwrite(out_file, frame)
             n_frames += 1
         else:
