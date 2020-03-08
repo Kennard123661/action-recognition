@@ -4,7 +4,7 @@ pytube3
 torch==1.4
 torchvision
 numpy
-tensorflow-gpu==1.14
+tensorflow==2.1.0
 tensorboard
 tensorboardX
 matplotlib
@@ -12,3 +12,4 @@ scipy
 opencv-python
 p_tqdm
 imageio
+git+https://github.com/google-research/tf-slim
