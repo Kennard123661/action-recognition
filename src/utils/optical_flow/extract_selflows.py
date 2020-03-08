@@ -57,7 +57,7 @@ class BasicDataset(object):
         for d, image_dir in enumerate(tqdm(self.image_dirs)):
             n_images = len(os.listdir(image_dir))
             # image_files = [os.path.join(image_dir, '{0:06d}.jpg'.format(i)) for i in range(n_images)]
-            image_files = [os.path.join(image_dir, '{0:06d}.jpg'.format(i+1)) for i in range(n_images)]
+            image_files = [os.path.join(image_dir, '{0:06d}.png'.format(i)) for i in range(n_images)]
             for file in image_files:
                 assert os.path.exists(file), '{} does not exist'.format(file)
 
