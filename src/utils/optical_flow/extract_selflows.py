@@ -178,7 +178,7 @@ def _extract_optical_flow(image_dirs, out_dirs, model_ckpt, batch_size=4, n_work
     flow_bw_color = _flow_to_color(flow_bw['full_res'], mask=None, max_flow=256)
     restore_vars = tf.compat.v1.get_collection(tf.compat.v1.GraphKeys.GLOBAL_VARIABLES)
     saver = tf.compat.v1.train.Saver(var_list=restore_vars)
-    sess = tf.compat.v1.Session(config=tf.ConfigProto(allow_soft_placement=True, log_device_placement=True))
+    sess = tf.compat.v1.Session(config=tf.compat.v1.ConfigProto(allow_soft_placement=True, log_device_placement=True))
     sess.run(tf.compat.v1.global_variables_initializer())
     sess.run(iterator.initializer)
     saver.restore(sess, model_ckpt)
