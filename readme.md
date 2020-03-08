@@ -129,7 +129,16 @@ use make
 There are some issues during `make install`, refer to [here](https://answers.opencv.org/question/221827/a-installation-problem-of-opencvsolved/)
 
 
+```bash
+CUDA_VISIBLE_DEVICES=0 python src/utils/optical_flow/extract_selflows.py --n_gpu 3 --gpu 0
+CUDA_VISIBLE_DEVICES=1 python src/utils/optical_flow/extract_selflows.py --n_gpu 3 --gpu 1
+CUDA_VISIBLE_DEVICES=3 python src/utils/optical_flow/extract_selflows.py --n_gpu 3 --gpu 2
+```
+
 ## Extras
+
+
+
 
 ### Exporting Conda environments
 ```bash

@@ -7,6 +7,11 @@ import argparse
 import imageio
 from tqdm import tqdm
 
+if __name__ == '__main__':
+    import sys
+    BASE_DIR = os.path.join(os.path.dirname(__file__), '..', '..')
+    sys.path.append(BASE_DIR)
+
 from config import ROOT_DIR
 from nets.optical_flow.selflow import flow_resize, pyramid_processing
 import nets.optical_flow.selflow as selflow
@@ -148,37 +153,35 @@ def _flow_to_color(flow, mask=None, max_flow=None):
 def _extract_optical_flow(image_dirs, out_dirs, model_ckpt, batch_size=4, n_workers=4, device=0):
     batch_size = int(batch_size)
     n_workers = int(n_workers)
-    with tf.device('/GPU:'+str(device)):
-        dataset = BasicDataset(image_dirs=image_dirs, out_dirs=out_dirs, batch_size=batch_size)
-        out_fids = dataset.out_fids
+    dataset = BasicDataset(image_dirs=image_dirs, out_dirs=out_dirs, batch_size=batch_size)
+    out_fids = dataset.out_fids
 
-        iterator = dataset.create_one_shot_iterator(dataset.file_queues, num_parallel_calls=n_workers)
-        batch_img0, batch_img1, batch_img2 = iterator.get_next()
-        img_shape = tf.shape(input=batch_img0)
-        h = img_shape[1]
-        w = img_shape[2]
+    # iterator = dataset.create_one_shot_iterator(dataset.file_queues, num_parallel_calls=n_workers)
+    iterator = dataset.create_one_shot_iterator(dataset.file_queues, num_parallel_calls=n_workers)
+    batch_img0, batch_img1, batch_img2 = iterator.get_next()
+    img_shape = tf.shape(input=batch_img0)
+    h = img_shape[1]
+    w = img_shape[2]
 
-        new_h = tf.compat.v1.where(tf.equal(tf.math.mod(h, 64), 0), h, (tf.cast(tf.floor(h / 64) + 1, dtype=tf.int32)) * 64)
-        new_w = tf.compat.v1.where(tf.equal(tf.math.mod(w, 64), 0), w, (tf.cast(tf.floor(w / 64) + 1, dtype=tf.int32)) * 64)
+    new_h = tf.compat.v1.where(tf.equal(tf.math.mod(h, 64), 0), h, (tf.cast(tf.floor(h / 64) + 1, dtype=tf.int32)) * 64)
+    new_w = tf.compat.v1.where(tf.equal(tf.math.mod(w, 64), 0), w, (tf.cast(tf.floor(w / 64) + 1, dtype=tf.int32)) * 64)
 
-        batch_img0 = tf.image.resize(batch_img0, [new_h, new_w], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
-        batch_img1 = tf.image.resize(batch_img1, [new_h, new_w], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
-        batch_img2 = tf.image.resize(batch_img2, [new_h, new_w], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+    batch_img0 = tf.image.resize(batch_img0, [new_h, new_w], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+    batch_img1 = tf.image.resize(batch_img1, [new_h, new_w], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+    batch_img2 = tf.image.resize(batch_img2, [new_h, new_w], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+    flow_fw, flow_bw = pyramid_processing(batch_img0, batch_img1, batch_img2, train=False, trainable=False,
+                                          is_scale=True)
+    flow_fw['full_res'] = flow_resize(flow_fw['full_res'], [h, w], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+    flow_bw['full_res'] = flow_resize(flow_bw['full_res'], [h, w], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
 
-        flow_fw, flow_bw = pyramid_processing(batch_img0, batch_img1, batch_img2, train=False, trainable=False,
-                                              is_scale=True)
-        flow_fw['full_res'] = flow_resize(flow_fw['full_res'], [h, w], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
-        flow_bw['full_res'] = flow_resize(flow_bw['full_res'], [h, w], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
-
-        flow_fw_color = _flow_to_color(flow_fw['full_res'], mask=None, max_flow=256)
-        flow_bw_color = _flow_to_color(flow_bw['full_res'], mask=None, max_flow=256)
-
-        restore_vars = tf.compat.v1.get_collection(tf.compat.v1.GraphKeys.GLOBAL_VARIABLES)
-        saver = tf.compat.v1.train.Saver(var_list=restore_vars)
-        sess = tf.compat.v1.Session()
-        sess.run(tf.compat.v1.global_variables_initializer())
-        sess.run(iterator.initializer)
-        saver.restore(sess, model_ckpt)
+    flow_fw_color = _flow_to_color(flow_fw['full_res'], mask=None, max_flow=256)
+    flow_bw_color = _flow_to_color(flow_bw['full_res'], mask=None, max_flow=256)
+    restore_vars = tf.compat.v1.get_collection(tf.compat.v1.GraphKeys.GLOBAL_VARIABLES)
+    saver = tf.compat.v1.train.Saver(var_list=restore_vars)
+    sess = tf.compat.v1.Session(config=tf.ConfigProto(allow_soft_placement=True, log_device_placement=True))
+    sess.run(tf.compat.v1.global_variables_initializer())
+    sess.run(iterator.initializer)
+    saver.restore(sess, model_ckpt)
 
     n_iterations = math.ceil(dataset.n_data / batch_size)
     for i in tqdm(range(n_iterations)):
@@ -203,9 +206,8 @@ def _parse_args():
     parser.add_argument('--ckpt', default='sintel', type=str, choices=['kitti', 'sintel'])
     parser.add_argument("--dataset", default='breakfast', choices=['breakfast', 'activitynet', 'kinetics'])
     parser.add_argument('--n_workers', default=4, type=int)
-    parser.add_argument("--n_gpu", type=int, default=len(tf.config.experimental.list_physical_devices('GPU')),
-                        help='number of GPU')
-    parser.add_argument('--batch_size', type=int, default=4, help='batch size')
+    parser.add_argument("--n_gpu", type=int, default=1, help='number of GPU')
+    parser.add_argument('--batch_size', type=int, default=8, help='batch size')
     parser.add_argument('--gpu', type=int, default=0)
     return parser.parse_args()
 
@@ -241,7 +243,7 @@ def main():
         args.n_gpu = 3
         if args.gpu == 2:
             args.gpu = 3
-    os.environ['CUDA_VISIBLE_DEVICES'] = str(args.gpu)
+    # os.environ['CUDA_VISIBLE_DEVICES'] = str(args.gpu)
 
     video_selflow_dirs = [os.path.join(selflow_out_dir, video) for video in videos]
     n_frame_files = [os.path.join(n_frames_dir, video + '.npy') for video in videos]
