@@ -1,5 +1,4 @@
 from __future__ import division, print_function, absolute_import
-import torch
 import tensorflow as tf
 import numpy as np
 import os
@@ -18,7 +17,7 @@ import data.kinetics400 as kinetics
 
 def mvn(img):
     # minus mean color and divided by standard variance
-    mean, var = tf.nn.moments(img, axes=[0, 1], keep_dims=True)
+    mean, var = tf.nn.moments(x=img, axes=[0, 1], keepdims=True)
     img = (img - mean) / tf.sqrt(var + 1e-12)
     return img
 
@@ -73,7 +72,8 @@ class BasicDataset(object):
 
     # KITTI's data format for storing flow and mask
     # The first two channels are flow, the third channel is mask
-    def extract_flow_and_mask(self, flow):
+    @staticmethod
+    def extract_flow_and_mask(flow):
         # The default image type is PNG.
         optical_flow = flow[:, :, :2]
         optical_flow = (optical_flow - 32768) / 64.0
@@ -81,16 +81,17 @@ class BasicDataset(object):
         mask = tf.expand_dims(mask, -1)
         return optical_flow, mask
 
-    def read_and_decode(self, filename_queue):
+    @staticmethod
+    def read_and_decode(filename_queue):
         img0_name = filename_queue[0]
         img1_name = filename_queue[1]
         img2_name = filename_queue[2]
 
-        img0 = tf.image.decode_png(tf.read_file(img0_name), channels=3)
+        img0 = tf.image.decode_png(tf.io.read_file(img0_name), channels=3)
         img0 = tf.cast(img0, tf.float32)
-        img1 = tf.image.decode_png(tf.read_file(img1_name), channels=3)
+        img1 = tf.image.decode_png(tf.io.read_file(img1_name), channels=3)
         img1 = tf.cast(img1, tf.float32)
-        img2 = tf.image.decode_png(tf.read_file(img2_name), channels=3)
+        img2 = tf.image.decode_png(tf.io.read_file(img2_name), channels=3)
         img2 = tf.cast(img2, tf.float32)
         return img0, img1, img2
 
@@ -111,11 +112,11 @@ class BasicDataset(object):
         """ For Validation or Testing
             Generate image and flow one_by_one without cropping, image and flow size may change every iteration
         """
-        data_list = tf.convert_to_tensor(data_list, dtype=tf.string)
+        data_list = tf.convert_to_tensor(value=data_list, dtype=tf.string)
         dataset = tf.data.Dataset.from_tensor_slices(data_list)
         dataset = dataset.map(self.preprocess_one_shot, num_parallel_calls=num_parallel_calls)
         dataset = dataset.batch(self.batch_size)
-        iterator = dataset.make_initializable_iterator()
+        iterator = tf.compat.v1.data.make_initializable_iterator(dataset)
         return iterator
 
 
@@ -126,17 +127,17 @@ def _flow_to_color(flow, mask=None, max_flow=None):
         mask: flow validity mask of shape [num_batch, height, width, 1].
     """
     n = 8
-    num_batch, height, width, _ = tf.unstack(tf.shape(flow))
+    num_batch, height, width, _ = tf.unstack(tf.shape(input=flow))
     mask = tf.ones([num_batch, height, width, 1]) if mask is None else mask
     flow_u, flow_v = tf.unstack(flow, axis=3)
     if max_flow is not None:
-        max_flow = tf.maximum(tf.to_float(max_flow), 1.)
+        max_flow = tf.maximum(tf.cast(max_flow, dtype=tf.float32), 1.)
     else:
-        max_flow = tf.reduce_max(tf.abs(flow * mask))
-    mag = tf.sqrt(tf.reduce_sum(tf.square(flow), 3))
+        max_flow = tf.reduce_max(input_tensor=tf.abs(flow * mask))
+    mag = tf.sqrt(tf.reduce_sum(input_tensor=tf.square(flow), axis=3))
     angle = tf.atan2(flow_v, flow_u)
 
-    im_h = tf.mod(angle / (2 * np.pi) + 1.0, 1.0)
+    im_h = tf.math.mod(angle / (2 * np.pi) + 1.0, 1.0)
     im_s = tf.clip_by_value(mag * n / max_flow, 0, 1)
     im_v = tf.clip_by_value(n - im_s, 0, 1)
     im_hsv = tf.stack([im_h, im_s, im_v], 3)
@@ -144,48 +145,51 @@ def _flow_to_color(flow, mask=None, max_flow=None):
     return im * mask
 
 
-def _extract_optical_flow(image_dirs, out_dirs, model_ckpt, batch_size=4, n_workers=4, n_gpus=1, cpu_device='/cpu:0'):
+def _extract_optical_flow(image_dirs, out_dirs, model_ckpt, batch_size=4, n_workers=4, device=0):
     batch_size = int(batch_size)
     n_workers = int(n_workers)
-    n_gpus = int(n_gpus)
-    shared_device = '/gpu:0' if n_gpus == 1 else cpu_device
+    with tf.device('/GPU:'+str(device)):
+        dataset = BasicDataset(image_dirs=image_dirs, out_dirs=out_dirs, batch_size=batch_size)
+        out_fids = dataset.out_fids
 
-    dataset = BasicDataset(image_dirs=image_dirs, out_dirs=out_dirs, batch_size=batch_size)
-    out_fids = dataset.out_fids
+        iterator = dataset.create_one_shot_iterator(dataset.file_queues, num_parallel_calls=n_workers)
+        batch_img0, batch_img1, batch_img2 = iterator.get_next()
+        img_shape = tf.shape(input=batch_img0)
+        h = img_shape[1]
+        w = img_shape[2]
 
-    iterator = dataset.create_one_shot_iterator(dataset.file_queues, num_parallel_calls=n_workers)
-    batch_img0, batch_img1, batch_img2 = iterator.get_next()
-    img_shape = tf.shape(batch_img0)
-    h = img_shape[1]
-    w = img_shape[2]
+        new_h = tf.compat.v1.where(tf.equal(tf.math.mod(h, 64), 0), h, (tf.cast(tf.floor(h / 64) + 1, dtype=tf.int32)) * 64)
+        new_w = tf.compat.v1.where(tf.equal(tf.math.mod(w, 64), 0), w, (tf.cast(tf.floor(w / 64) + 1, dtype=tf.int32)) * 64)
 
-    new_h = tf.where(tf.equal(tf.mod(h, 64), 0), h, (tf.to_int32(tf.floor(h / 64) + 1)) * 64)
-    new_w = tf.where(tf.equal(tf.mod(w, 64), 0), w, (tf.to_int32(tf.floor(w / 64) + 1)) * 64)
+        batch_img0 = tf.image.resize(batch_img0, [new_h, new_w], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+        batch_img1 = tf.image.resize(batch_img1, [new_h, new_w], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+        batch_img2 = tf.image.resize(batch_img2, [new_h, new_w], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
 
-    batch_img0 = tf.image.resize_images(batch_img0, [new_h, new_w], method=1, align_corners=True)
-    batch_img1 = tf.image.resize_images(batch_img1, [new_h, new_w], method=1, align_corners=True)
-    batch_img2 = tf.image.resize_images(batch_img2, [new_h, new_w], method=1, align_corners=True)
+        flow_fw, flow_bw = pyramid_processing(batch_img0, batch_img1, batch_img2, train=False, trainable=False,
+                                              is_scale=True)
+        flow_fw['full_res'] = flow_resize(flow_fw['full_res'], [h, w], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
+        flow_bw['full_res'] = flow_resize(flow_bw['full_res'], [h, w], method=tf.image.ResizeMethod.NEAREST_NEIGHBOR)
 
-    flow_fw, flow_bw = pyramid_processing(batch_img0, batch_img1, batch_img2, train=False, trainable=False,
-                                          is_scale=True)
-    flow_fw['full_res'] = flow_resize(flow_fw['full_res'], [h, w], method=1)
-    flow_bw['full_res'] = flow_resize(flow_bw['full_res'], [h, w], method=1)
+        flow_fw_color = _flow_to_color(flow_fw['full_res'], mask=None, max_flow=256)
+        flow_bw_color = _flow_to_color(flow_bw['full_res'], mask=None, max_flow=256)
 
-    flow_fw_color = _flow_to_color(flow_fw['full_res'], mask=None, max_flow=256)
-    flow_bw_color = _flow_to_color(flow_bw['full_res'], mask=None, max_flow=256)
-
-    restore_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)
-    saver = tf.train.Saver(var_list=restore_vars)
-    sess = tf.Session()
-    sess.run(tf.global_variables_initializer())
-    sess.run(iterator.initializer)
-    saver.restore(sess, model_ckpt)
+        restore_vars = tf.compat.v1.get_collection(tf.compat.v1.GraphKeys.GLOBAL_VARIABLES)
+        saver = tf.compat.v1.train.Saver(var_list=restore_vars)
+        sess = tf.compat.v1.Session()
+        sess.run(tf.compat.v1.global_variables_initializer())
+        sess.run(iterator.initializer)
+        saver.restore(sess, model_ckpt)
 
     n_iterations = math.ceil(dataset.n_data / batch_size)
     for i in tqdm(range(n_iterations)):
         np_flow_fw, np_flow_bw, np_flow_fw_color, np_flow_bw_color = \
             sess.run([flow_fw['full_res'], flow_bw['full_res'], flow_fw_color, flow_bw_color])
         batch_fids = out_fids[i*batch_size:min((i+1)*batch_size, dataset.n_data)]
+
+        # color the colored optical flow images to regular images
+        np_flow_fw_color = np_flow_fw_color.astype(np.uint8)
+        np_flow_bw_color = np_flow_bw_color.astype(np.uint8)
+
         for f, out_fid in enumerate(batch_fids):
             save_dir, fid = os.path.split(out_fid)
             imageio.imsave(os.path.join(save_dir, 'flow_fw_color_{}.png'.format(fid)), np_flow_fw_color[f])
@@ -199,9 +203,10 @@ def _parse_args():
     parser.add_argument('--ckpt', default='sintel', type=str, choices=['kitti', 'sintel'])
     parser.add_argument("--dataset", default='breakfast', choices=['breakfast', 'activitynet', 'kinetics'])
     parser.add_argument('--n_workers', default=4, type=int)
-    parser.add_argument("--n_gpu", type=int, default=torch.cuda.device_count(), help='number of GPU')
+    parser.add_argument("--n_gpu", type=int, default=len(tf.config.experimental.list_physical_devices('GPU')),
+                        help='number of GPU')
     parser.add_argument('--batch_size', type=int, default=4, help='batch size')
-    parser.add_argument('--gpu', type=int, required=True)
+    parser.add_argument('--gpu', type=int, default=0)
     return parser.parse_args()
 
 
@@ -258,7 +263,7 @@ def main():
     video_image_dirs = [os.path.join(extracted_images_dir, video) for video in videos]
 
     _extract_optical_flow(video_image_dirs, video_selflow_dirs, model_ckpt=ckpt_file, batch_size=args.batch_size,
-                          n_workers=args.n_workers, n_gpus=args.n_gpu)
+                          n_workers=args.n_workers, device=args.gpu)
 
 
 if __name__ == '__main__':

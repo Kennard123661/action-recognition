@@ -1,6 +1,6 @@
 import os
 import tensorflow as tf
-import tensorflow.contrib.slim as slim
+import tf_slim as slim
 
 from nets.optical_flow import PRETRAINED_FLOW_MODEL_DIR
 SELFLOW_PRETRAINED_DIR = os.path.join(PRETRAINED_FLOW_MODEL_DIR, 'selflow')
@@ -8,12 +8,12 @@ SINTEL_PRETRAINED_DIR = os.path.join(SELFLOW_PRETRAINED_DIR, 'sintel')
 KITTI_PRETRAINED_DIR = os.path.join(SELFLOW_PRETRAINED_DIR, 'kitti')
 
 
-def flow_resize(flow, out_size, is_scale=True, method=0):
+def flow_resize(flow, out_size, is_scale=True, method=tf.image.ResizeMethod.BILINEAR):
     """ method: 0 mean bilinear, 1 means nearest """
-    flow_size = tf.to_float(tf.shape(flow)[-3:-1])
-    flow = tf.image.resize_images(flow, out_size, method=method, align_corners=True)
+    flow_size = tf.cast(tf.shape(input=flow)[-3:-1], dtype=tf.float32)
+    flow = tf.image.resize(flow, out_size, method=method)
     if is_scale:
-        scale = tf.to_float(out_size) / flow_size
+        scale = tf.cast(out_size, dtype=tf.float32) / flow_size
         scale = tf.stack([scale[1], scale[0]])
         flow = tf.multiply(flow, scale)
     return flow
@@ -32,7 +32,7 @@ def get_pixel_value(img, x, y):
     -------
     - output: tensor of shape (B, H, W, C)
     """
-    shape = tf.shape(x)
+    shape = tf.shape(input=x)
     batch_size = shape[0]
     height = shape[1]
     width = shape[2]
@@ -107,7 +107,7 @@ def tf_warp(img, flow, H=256, W=256):
 
 
 def feature_extractor(x, train=True, trainable=True, reuse=None, regularizer=None, name='feature_extractor'):
-    with tf.variable_scope(name, reuse=reuse, regularizer=regularizer):
+    with tf.compat.v1.variable_scope(name, reuse=reuse, regularizer=regularizer):
         with slim.arg_scope([slim.conv2d], activation_fn=lrelu, kernel_size=3, padding='SAME', trainable=trainable):
             net = {}
             net['conv1_1'] = slim.conv2d(x, 16, stride=2, scope='conv1_1')
@@ -132,7 +132,7 @@ def feature_extractor(x, train=True, trainable=True, reuse=None, regularizer=Non
 
 def context_network(x, flow, train=True, trainable=True, reuse=None, regularizer=None, name='context_network'):
     x_input = tf.concat([x, flow], axis=-1)
-    with tf.variable_scope(name, reuse=reuse, regularizer=regularizer):
+    with tf.compat.v1.variable_scope(name, reuse=reuse, regularizer=regularizer):
         with slim.arg_scope([slim.conv2d], activation_fn=lrelu, kernel_size=3, padding='SAME', trainable=trainable):
             net = {}
             net['dilated_conv1'] = slim.conv2d(x_input, 128, rate=1, scope='dilated_conv1')
@@ -150,7 +150,7 @@ def context_network(x, flow, train=True, trainable=True, reuse=None, regularizer
 def estimator_network(x1, cost_volume, flow, train=True, trainable=True, reuse=None, regularizer=None,
                       name='estimator'):
     net_input = tf.concat([cost_volume, x1, flow], axis=-1)
-    with tf.variable_scope(name, reuse=reuse, regularizer=regularizer):
+    with tf.compat.v1.variable_scope(name, reuse=reuse, regularizer=regularizer):
         with slim.arg_scope([slim.conv2d], activation_fn=lrelu, kernel_size=3, padding='SAME', trainable=trainable):
             net = {}
             net['conv1'] = slim.conv2d(net_input, 128, scope='conv1')
@@ -166,12 +166,12 @@ def compute_cost_volume(x1, x2, H, W, channel, d=9):
     x1 = tf.nn.l2_normalize(x1, axis=3)
     x2 = tf.nn.l2_normalize(x2, axis=3)
 
-    x2_patches = tf.extract_image_patches(x2, [1, d, d, 1], strides=[1, 1, 1, 1], rates=[1, 1, 1, 1], padding='SAME')
+    x2_patches = tf.image.extract_patches(x2, [1, d, d, 1], strides=[1, 1, 1, 1], rates=[1, 1, 1, 1], padding='SAME')
     x2_patches = tf.reshape(x2_patches, [-1, H, W, d, d, channel])
     x1_reshape = tf.reshape(x1, [-1, H, W, 1, 1, channel])
     x1_dot_x2 = tf.multiply(x1_reshape, x2_patches)
 
-    cost_volume = tf.reduce_sum(x1_dot_x2, axis=-1)
+    cost_volume = tf.reduce_sum(input_tensor=x1_dot_x2, axis=-1)
     # cost_volume = tf.reduce_mean(x1_dot_x2, axis=-1)
     cost_volume = tf.reshape(cost_volume, [-1, H, W, d * d])
     return cost_volume
@@ -182,7 +182,7 @@ def estimator(x0, x1, x2, flow_fw, flow_bw, train=True, trainable=True, reuse=No
     if train:
         x_shape = x1.get_shape().as_list()
     else:
-        x_shape = tf.shape(x1)
+        x_shape = tf.shape(input=x1)
     H = x_shape[1]
     W = x_shape[2]
     channel = x_shape[3]
@@ -210,7 +210,7 @@ def estimator(x0, x1, x2, flow_fw, flow_bw, train=True, trainable=True, reuse=No
 
 def pyramid_processing_three_frame(batch_img, x0_feature, x1_feature, x2_feature, train=True, trainable=True,
                                    reuse=None, regularizer=None, is_scale=True):
-    x_shape = tf.shape(x1_feature['conv6_2'])
+    x_shape = tf.shape(input=x1_feature['conv6_2'])
     initial_flow_fw = tf.zeros([x_shape[0], x_shape[1], x_shape[2], 2], dtype=tf.float32, name='initial_flow_fw')
     initial_flow_bw = tf.zeros([x_shape[0], x_shape[1], x_shape[2], 2], dtype=tf.float32, name='initial_flow_bw')
     flow_fw = {}
@@ -224,7 +224,7 @@ def pyramid_processing_three_frame(batch_img, x0_feature, x1_feature, x2_feature
     for i in range(4):
         feature_name = 'conv%d_2' % (5 - i)
         level = 'level_%d' % (5 - i)
-        feature_size = tf.shape(x1_feature[feature_name])[1:3]
+        feature_size = tf.shape(input=x1_feature[feature_name])[1:3]
         initial_flow_fw = flow_resize(flow_fw['level_%d' % (6 - i)], feature_size, is_scale=is_scale)
         initial_flow_bw = flow_resize(flow_bw['level_%d' % (6 - i)], feature_size, is_scale=is_scale)
         net_fw, net_bw = estimator(x0_feature[feature_name], x1_feature[feature_name], x2_feature[feature_name],
@@ -239,7 +239,7 @@ def pyramid_processing_three_frame(batch_img, x0_feature, x1_feature, x2_feature
     x_feature = tf.concat([net_fw['conv5'], net_bw['conv5']], axis=-1)
     flow_fw['refined'] = context_network(x_feature, flow_concat_fw, train=train, trainable=trainable, reuse=reuse,
                                          regularizer=regularizer, name='context_network')
-    flow_size = tf.shape(batch_img)[1:3]
+    flow_size = tf.shape(input=batch_img)[1:3]
     flow_fw['full_res'] = flow_resize(flow_fw['refined'], flow_size, is_scale=is_scale)
 
     x_feature = tf.concat([net_bw['conv5'], net_fw['conv5']], axis=-1)
