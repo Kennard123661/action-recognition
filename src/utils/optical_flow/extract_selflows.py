@@ -190,8 +190,8 @@ def _extract_optical_flow(image_dirs, out_dirs, model_ckpt, batch_size=4, n_work
         batch_fids = out_fids[i*batch_size:min((i+1)*batch_size, dataset.n_data)]
 
         # color the colored optical flow images to regular images
-        np_flow_fw_color = np_flow_fw_color.astype(np.uint8)
-        np_flow_bw_color = np_flow_bw_color.astype(np.uint8)
+        # np_flow_fw_color = np_flow_fw_color.astype(np.uint8)
+        # np_flow_bw_color = np_flow_bw_color.astype(np.uint8)
 
         for f, out_fid in enumerate(batch_fids):
             save_dir, fid = os.path.split(out_fid)
