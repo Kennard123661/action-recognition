@@ -150,7 +150,7 @@ def _flow_to_color(flow, mask=None, max_flow=None):
     return im * mask
 
 
-def _extract_optical_flow(image_dirs, out_dirs, model_ckpt, batch_size=4, n_workers=4, device=0):
+def _extract_optical_flow(image_dirs, out_dirs, model_ckpt, batch_size=4, n_workers=4):
     batch_size = int(batch_size)
     n_workers = int(n_workers)
     dataset = BasicDataset(image_dirs=image_dirs, out_dirs=out_dirs, batch_size=batch_size)
@@ -206,9 +206,9 @@ def _parse_args():
     parser.add_argument('--ckpt', default='sintel', type=str, choices=['kitti', 'sintel'])
     parser.add_argument("--dataset", default='breakfast', choices=['breakfast', 'activitynet', 'kinetics'])
     parser.add_argument('--n_workers', default=4, type=int)
-    parser.add_argument("--n_gpu", type=int, default=1, help='number of GPU')
     parser.add_argument('--batch_size', type=int, default=8, help='batch size')
-    parser.add_argument('--gpu', type=int, default=0)
+    parser.add_argument('--cam', type=int, default=0, help='camera type, used only for the breakfast dataset '
+                                                           'which has three different types of cameras')
     return parser.parse_args()
 
 
@@ -238,12 +238,10 @@ def main():
 
     # find videos that have not been processed
     videos = sorted(os.listdir(extracted_images_dir))
-    videos = [video for i, video in enumerate(videos) if ((i % args.n_gpu) == args.gpu)]
-    if ROOT_DIR == '/mnt/BigData/cs5242-project':
-        args.n_gpu = 3
-        if args.gpu == 2:
-            args.gpu = 3
-    # os.environ['CUDA_VISIBLE_DEVICES'] = str(args.gpu)
+
+    if args.dataset == 'breakfast':
+        camera_types = ['stereo01', 'webcam01', 'cam01']
+        videos = [video for video in videos if camera_types[args.cam] in video]
 
     video_selflow_dirs = [os.path.join(selflow_out_dir, video) for video in videos]
     n_frame_files = [os.path.join(n_frames_dir, video + '.npy') for video in videos]
@@ -265,7 +263,7 @@ def main():
     video_image_dirs = [os.path.join(extracted_images_dir, video) for video in videos]
 
     _extract_optical_flow(video_image_dirs, video_selflow_dirs, model_ckpt=ckpt_file, batch_size=args.batch_size,
-                          n_workers=args.n_workers, device=args.gpu)
+                          n_workers=args.n_workers)
 
 
 if __name__ == '__main__':
