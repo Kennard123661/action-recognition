@@ -129,20 +129,25 @@ class TSN(nn.Module):
         batch_size, n_segments, _, height, width = inputs.shape
         print(self.n_input_channels)
         inputs = inputs.view(batch_size * n_segments, self.n_input_channels, height, width)
-        inputs = self.extract_feats(inputs)
+        inputs = self.extract_feats(inputs)  # extract convnet features
+
+        # spatially pool the outputs into a single input.
         inputs = self.pool_fn(inputs)
-        inputs = inputs.view(batch_size, n_segments, self.fc_in_channels, height, width)
+        inputs = inputs.view(batch_size, n_segments, self.fc_in_channels)
+
+        # aggregate teh segments
         inputs = self.consensus(inputs)
         cls_out = self.cls_head(inputs)
         return cls_out  # unnormalized classification score
 
 
 def main():
-    tsn = TSN(modality='flow', ckpt_name='ucf101', n_classes=101)
+    tsn = TSN(modality='flow', ckpt_name='ucf101', n_classes=50)
     import numpy as np
-    dummy_inputs = torch.from_numpy(np.random.randn(3, 3, 10, 340, 256).astype(np.float32))
+    dummy_inputs = torch.from_numpy(np.random.randn(3, 3, 10, 224, 224).astype(np.float32))
     cls_out = tsn(dummy_inputs)
     print(cls_out.shape)
+    print(cls_out)
 
 
 if __name__ == '__main__':
