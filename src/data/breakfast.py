@@ -96,19 +96,18 @@ def _get_video_data(videoname):
     return video_segments, video_labels
 
 
-def get_training_data():
-    train_videonames = get_split_videonames('train')
-    train_segments = []
-    train_labels = []
-    print('INFO: retrieving training segments')
-    for videoname in tqdm(train_videonames):
+def get_data(split):
+    videonames = get_split_videonames(split)
+    all_segments = []
+    all_labels = []
+    print('INFO: retrieving {} segments'.format(split))
+    for videoname in tqdm(videonames):
         segments, labels = _get_video_data(videoname)
-        train_segments.extend(list(segments))
-        train_labels.extend(list(labels))
-    print(train_labels[0])
+        all_segments.extend(list(segments))
+        all_labels.extend(list(labels))
     mapping_dict = _read_mapping_file()
-    train_logits = [mapping_dict[label] for label in train_labels]
-    return train_segments, train_labels, train_logits
+    all_logits = [mapping_dict[label] for label in all_labels]
+    return all_segments, all_labels, all_logits
 
 
 def _read_i3d_data(videoname, window):

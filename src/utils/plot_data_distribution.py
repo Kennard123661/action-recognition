@@ -17,7 +17,7 @@ def _display_distribution(labels, n_labels):
 
 
 if __name__ == '__main__':
-    _, labels, logits = breakfast.get_training_data()
+    _, labels, logits = breakfast.get_data(split='test')
 
     logits = [logit for logit in logits if logit]
     logits = [logit for logit in logits if logit < 48]
