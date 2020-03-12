@@ -26,6 +26,8 @@ class GroupImageTransform(object):
         self.resize_crop = resize_crop
         self.rescale_crop = rescale_crop
 
+        self.to_tensor()
+
         # croping parameters
         if crop_size is not None:
             if oversample == 'three_crop':
@@ -54,7 +56,7 @@ class GroupImageTransform(object):
         else:
             # 1. rescale
             if keep_ratio:
-                tuple_list = [mmcv.imrescale(
+                tuple_list = [videotransforms.imrescale(
                     img, scale, return_scale=True) for img in clip]
                 clip, scale_factors = list(zip(*tuple_list))
                 scale_factor = scale_factors[0]
@@ -81,17 +83,18 @@ class GroupImageTransform(object):
         if is_flow:
             for i in range(0, len(clip), 2):
                 clip[i] = mmcv.iminvert(clip[i])
+
         # 4a. div_255
         if div_255:
-            clip = [mmcv.imnormalize(img, 0, 255, False)
-                    for img in clip]
+            clip = videotransforms.normalize(clip, 0, 255)
+
         # 4. normalize
-        clip = [mmcv.imnormalize(
-            img, self.mean, self.std, self.to_rgb) for img in clip]
+        # todo: add slef to rgb
+        clip = videotransforms.normalize(clip, self.mean, self.std)
+
         # 5. pad
         if self.size_divisor is not None:
-            clip = [mmcv.impad_to_multiple(
-                img, self.size_divisor) for img in clip]
+            clip = [mmcv.impad_to_multiple(img, self.size_divisor) for img in clip]
             pad_shape = clip[0].shape
         else:
             pad_shape = img_shape

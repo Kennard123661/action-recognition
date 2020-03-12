@@ -1,0 +1,6 @@
+{
+  "lr": 0.1,
+  "test-batch-size": 100,
+  "train-batch-size": 100,
+  "model-id": 1
+}
