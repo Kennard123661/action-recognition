@@ -13,3 +13,4 @@ opencv-python
 p_tqdm
 imageio
 git+https://github.com/google-research/tf-slim
+Pillow
