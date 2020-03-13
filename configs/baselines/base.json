@@ -1,8 +1,17 @@
 {
-  "lr": 0.001,
   "test-batch-size": 256,
   "train-batch-size": 256,
   "model-id": "one-layer-mlp",
+  "dropout": 0,
+
   "max-epochs": 100,
-  "n-test-segments": 25
+  "n-test-segments": 25,
+  "optim": "adam",
+  "momentum": 0.9,
+  "nesterov": 0,
+
+  "lr": 0.001,
+  "scheduler": "step",
+  "lr-step": 50,
+  "lr-decay": 0.1
 }

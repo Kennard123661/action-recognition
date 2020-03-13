@@ -172,9 +172,9 @@ def get_submission_segments():
 
 
 if __name__ == '__main__':
-    segments = get_submission_segments()
-    print(len(segments))
+    # segments = get_submission_segments()
+    # print(len(segments))
     # cvt_i3d_to_numpy()
-    # pass
     # _read_i3d_data('P03_cam01_P03_cereals.avi')
     # print(_read_label_file(os.path.join(LABEL_DIR, 'P03.cam01.P03_cereals.avi.labels')))
+    pass

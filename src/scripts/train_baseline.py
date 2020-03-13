@@ -53,13 +53,25 @@ class Trainer:
 
         model_id = configs['model-id']
         if model_id == 'one-layer-mlp':
-            self.model = baselines.OneLayerMlp(in_channels=I3D_N_CHANNELS, n_classes=breakfast.N_CLASSES, dropout=0)
+            self.model = baselines.OneLayerMlp(in_channels=I3D_N_CHANNELS, n_classes=breakfast.N_CLASSES,
+                                               dropout=configs['dropout'])
         else:
             raise ValueError('no such model')
         self.model = self.model.cuda(self.device)
         self.loss_fn = nn.CrossEntropyLoss().cuda(self.device)
-        self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
-        self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=50, gamma=0.1)
+        if configs['optim'] == 'adam':
+            self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
+        elif configs['optim'] == 'sgd':
+            self.optimizer = optim.SGD(self.model.parameters(), lr=self.lr, momentum=configs['momentum'],
+                                       nesterov=configs['nesterov'])
+        else:
+            raise ValueError('no such optimizer')
+
+        if configs['scheduler'] == 'step':
+            self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=configs['lr-step'],
+                                                       gamma=configs['lr-decay'])
+        else:
+            raise ValueError('no such scheduler')
         self._load_checkpoint()
 
     def train(self, train_data, test_data):
@@ -74,7 +86,7 @@ class Trainer:
         for epoch in range(start_epoch, self.max_epochs):
             self.n_epochs += 1
             self.train_step(train_dataset)
-            self._save_checkpoint('model-' + str(start_epoch))
+            self._save_checkpoint('model-{}'.format(self.n_epochs))
             self._save_checkpoint()  # update the latest model
             train_acc = self.test_step(train_val_dataset)
             test_acc = self.test_step(test_dataset)
