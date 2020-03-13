@@ -22,6 +22,8 @@ I3D_DIR = os.path.join(DATASET_DIR, 'i3d')
 MAPPING_FILE = os.path.join(SPLIT_DIR, 'mapping.txt')
 
 SUBMISSION_LABEL_FILE = os.path.join(DATASET_DIR, 'test_segment.txt')
+MEAN_FILE = os.path.join(DATASET_DIR, 'mean.npy')
+STD_FILE = os.path.join(DATASET_DIR, 'std.npy')
 N_CLASSES = 48
 
 
