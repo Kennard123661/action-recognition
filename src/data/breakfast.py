@@ -2,6 +2,7 @@ import os
 import numpy as np
 from data import DATA_DIR
 from tqdm import tqdm
+from PIL import Image
 
 DATASET_DIR = os.path.join(DATA_DIR, 'breakfast')
 VIDEO_DIR = os.path.join(DATASET_DIR, 'videos')
@@ -146,6 +147,13 @@ def cvt_i3d_to_numpy():
             continue
         i3d_feats = read_raw_i3d_data(videoname + '.avi')
         np.save(i3d_file, i3d_feats)
+
+
+def read_frame(videoname, frame_id):
+    frame_dir = os.path.join(EXTRACTED_IMAGES_DIR, videoname)
+    frame_file = os.path.join(frame_dir, '{0:06d}.png'.format(frame_id))
+    im = Image.open(frame_file)
+    return im
 
 
 def get_submission_segments():
