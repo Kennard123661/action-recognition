@@ -8,6 +8,7 @@ import torch.optim as optim
 from torch.utils.data._utils.collate import default_collate
 import numpy as np
 from tqdm import tqdm
+import tensorboardX
 import argparse
 
 
@@ -47,6 +48,8 @@ class Trainer:
         self.log_dir = os.path.join(LOG_DIR, experiment)
         if not os.path.exists(self.log_dir):
             os.makedirs(self.log_dir)
+        self.tboard_writer = tensorboardX.SummaryWriter(log_dir=self.log_dir)
+
         self.checkpoint_dir = os.path.join(CHECKPOINT_DIR, experiment)
         if not os.path.exists(self.checkpoint_dir):
             os.makedirs(self.checkpoint_dir)
@@ -92,6 +95,11 @@ class Trainer:
             test_acc = self.test_step(test_dataset)
             print('INFO: at epoch {}, the train accuracy is {} and the test accuracy is {}'.format(self.n_epochs,
                                                                                                    train_acc, test_acc))
+            log_dict = {
+                'train': train_acc,
+                'test': test_acc
+            }
+            self.tboard_writer.add_scalars('accuracy', log_dict, self.n_epochs)
             self.scheduler.step(epoch)
 
     def train_step(self, train_dataset):
@@ -112,6 +120,7 @@ class Trainer:
             losses.append(loss.item())
         avg_loss = np.mean(losses)
         print('INFO: at epoch {0} loss = {1}'.format(self.n_epochs, avg_loss))
+        self.tboard_writer.add_scalar('loss', avg_loss, self.n_epochs)
 
     def test_step(self, test_dataset):
         dataloader = tdata.DataLoader(test_dataset, shuffle=False, batch_size=self.test_batch_size,
