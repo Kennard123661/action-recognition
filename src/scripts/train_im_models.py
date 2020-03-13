@@ -26,11 +26,10 @@ CONFIG_DIR = os.path.join(BASE_CONFIG_DIR, 'im_models')
 
 
 class Trainer:
-    def __init__(self, experiment, device):
+    def __init__(self, experiment):
         config_file = os.path.join(CONFIG_DIR, experiment + '.json')
         assert os.path.exists(config_file), 'config file {} does not exist'.format(config_file)
         self.experiment = experiment
-        self.device = int(device)
         with open(config_file, 'r') as f:
             self.configs = json.load(f)
 
@@ -40,6 +39,7 @@ class Trainer:
         self.test_batch_size = self.configs['test-batch-size']
         self.n_test_segments = self.configs['n-test-segments']
         self.n_epochs = 0
+        self.devices = np.arange(torch.cuda.device_count())
 
         self.log_dir = os.path.join(LOG_DIR, experiment)
         if not os.path.exists(self.log_dir):
@@ -59,31 +59,37 @@ class Trainer:
             self.input_size = 224
         else:
             raise ValueError('no such model')
-        self.model = self.model.cuda(self.device)
-        self.loss_fn = nn.CrossEntropyLoss().cuda(self.device)
+        self._load_saved_model()
+        self.model = nn.DataParallel(self.model).cuda()
 
+        self.loss_fn = nn.CrossEntropyLoss().cuda()
         if self.configs['optim'] == 'adam':
             self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
         elif self.configs['optim'] == 'sgd':
             self.optimizer = optim.SGD(self.model.parameters(), lr=self.lr, momentum=self.configs['momentum'],
-                                       nesterov=self.configs['nesterov'])
+                                       nesterov=self.configs['nesterov'], dampening=self.configs['dampening'],
+                                       weight_decay=self.configs['weight-decay'])
         else:
             raise ValueError('no such optimizer')
 
         if self.configs['scheduler'] == 'step':
             self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=self.configs['lr-step'],
                                                        gamma=self.configs['lr-decay'])
+        elif self.configs['scheduler'] == 'plateau':
+            self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min',
+                                                                  patience=self.configs['lr-step'])
         else:
             raise ValueError('no such scheduler')
-        self._load_checkpoint()
+        self._load_training_checkpoint()
 
     def train(self, train_data, test_data):
         train_segments, train_labels, train_logits = train_data
         test_segments, test_labels, test_logits = test_data
 
-        train_dataset = TrainDataset(train_segments, train_labels, train_logits)
-        test_dataset = TestDataset(test_segments, test_labels, test_logits, n_samples=self.n_test_segments)
-        train_val_dataset = TestDataset(train_segments, train_labels, train_logits)
+        train_dataset = TrainDataset(train_segments, train_labels, train_logits, input_size=self.input_size)
+        test_dataset = TestDataset(test_segments, test_labels, test_logits, n_samples=self.n_test_segments,
+                                   input_size=self.input_size)
+        train_val_dataset = TestDataset(train_segments, train_labels, train_logits, input_size=self.input_size)
 
         start_epoch = self.n_epochs
         for epoch in range(start_epoch, self.max_epochs):
@@ -109,8 +115,8 @@ class Trainer:
         self.model.train()
         losses = []
         for feats, logits in tqdm(dataloader):
-            feats = feats.cuda(self.device)
-            logits = logits.cuda(self.device)
+            feats = feats.cuda()
+            logits = logits.cuda()
 
             self.optimizer.zero_grad()
             feats = self.model(feats)
@@ -131,8 +137,8 @@ class Trainer:
         with torch.no_grad():
             for feats, logits in tqdm(dataloader):
                 bs, n_segments, n_channels, h, w = feats.shape
-                feats = feats.cuda(self.device)
-                logits = logits.cuda(self.device)
+                feats = feats.cuda()
+                logits = logits.cuda()
 
                 feats = feats.view(-1, n_channels, h, w)
                 feats = self.model(feats)
@@ -159,12 +165,20 @@ class Trainer:
         }
         torch.save(save_dict, checkpoint_file)
 
-    def _load_checkpoint(self, checkpoint_name='model'):
+    def _load_saved_model(self, checkpoint_name='model'):
         checkpoint_file = os.path.join(self.checkpoint_dir, checkpoint_name + '.pth')
         if os.path.exists(checkpoint_file):
             print('INFO: loading checkpoint {}'.format(checkpoint_file))
             checkpoint = torch.load(checkpoint_file)
             self.model.load_state_dict(checkpoint['model'])
+        else:
+            print('INFO: checkpoint does not exist, continuing...')
+
+    def _load_training_checkpoint(self, checkpoint_name='model'):
+        checkpoint_file = os.path.join(self.checkpoint_dir, checkpoint_name + '.pth')
+        if os.path.exists(checkpoint_file):
+            print('INFO: loading checkpoint {}'.format(checkpoint_file))
+            checkpoint = torch.load(checkpoint_file)
             self.optimizer.load_state_dict(checkpoint['optim'])
             self.scheduler.load_state_dict(checkpoint['scheduler'])
             self.n_epochs = checkpoint['n-epochs']
@@ -180,7 +194,7 @@ class Trainer:
         with torch.no_grad():
             for feats in tqdm(dataloader):
                 bs, n_segments, n_channels, h, w = feats.shape
-                feats = feats.cuda(self.device)
+                feats = feats.cuda()
                 feats = feats.view(-1, n_channels, h, w)
                 feats = self.model(feats)
                 feats = feats.view(-1, self.n_test_segments, breakfast.N_CLASSES)
@@ -282,12 +296,25 @@ class PredictionDataset(TestDataset):
         return selected
 
 
+def get_clean_data(split):
+    segments, labels, logits = breakfast.get_data(split)
+    valid_segments = []
+    valid_labels = []
+    valid_logits = []
+    for i, segment in enumerate(segments):
+        if 48 > logits[i] > 0:  # remove walk in and walk out.
+            valid_segments.append(segment)
+            valid_labels.append(labels[i])
+            valid_logits.append(logits[i])
+    return [valid_segments, valid_labels, valid_logits]
+
+
 def main():
     set_determinstic_mode()
     args = parse_args()
-    trainer = Trainer(args.config, args.device)
-    train_data = breakfast.get_data('train')
-    test_data = breakfast.get_data('test')
+    trainer = Trainer(args.config)
+    train_data = get_clean_data('train')
+    test_data = get_clean_data('test')
     trainer.train(train_data, test_data)
 
 
