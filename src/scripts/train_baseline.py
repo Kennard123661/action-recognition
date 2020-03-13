@@ -7,9 +7,13 @@ import torch.utils.data as tdata
 import torch.optim as optim
 from torch.utils.data._utils.collate import default_collate
 import numpy as np
-import tensorboardX
 from tqdm import tqdm
 import argparse
+
+
+if __name__ == '__main__':
+    import sys
+    sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from scripts import BASE_LOG_DIR, BASE_CHECKPOINT_DIR, BASE_CONFIG_DIR
 from scripts import set_determinstic_mode
@@ -18,9 +22,9 @@ from nets.action_reg import baselines
 
 CHECKPOINT_DIR = os.path.join(BASE_CHECKPOINT_DIR, 'baselines')
 LOG_DIR = os.path.join(BASE_LOG_DIR, 'baselines')
-CONFIG_DIR = os.path.join(BASE_CONFIG_DIR, 'configs')
+CONFIG_DIR = os.path.join(BASE_CONFIG_DIR, 'baselines')
 
-I3D_N_CHANNELS = 800
+I3D_N_CHANNELS = 400
 NUM_WORKERS = 8
 
 
@@ -49,10 +53,10 @@ class Trainer:
 
         model_id = configs['model-id']
         if model_id == 'one-layer-mlp':
-            self.model = baselines.OneLayerMlp(in_channels=I3D_N_CHANNELS, n_classes=breakfast.N_CLASSES)
+            self.model = baselines.OneLayerMlp(in_channels=I3D_N_CHANNELS, n_classes=breakfast.N_CLASSES, dropout=0)
         else:
             raise ValueError('no such model')
-        self.model.cuda(self.device)
+        self.model = self.model.cuda(self.device)
         self.loss_fn = nn.CrossEntropyLoss().cuda(self.device)
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
         self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=50, gamma=0.1)
@@ -64,6 +68,7 @@ class Trainer:
 
         train_dataset = TrainDataset(train_segments, train_labels, train_logits)
         test_dataset = TestDataset(test_segments, test_labels, test_logits, n_samples=self.n_test_segments)
+        train_val_dataset = TestDataset(train_segments, train_labels, train_logits)
 
         start_epoch = self.n_epochs
         for epoch in range(start_epoch, self.max_epochs):
@@ -71,7 +76,10 @@ class Trainer:
             self.train_step(train_dataset)
             self._save_checkpoint('model-' + str(start_epoch))
             self._save_checkpoint()  # update the latest model
-            self.test_step(test_dataset)
+            train_acc = self.test_step(train_val_dataset)
+            test_acc = self.test_step(test_dataset)
+            print('INFO: at epoch {}, the train accuracy is {} and the test accuracy is {}'.format(self.n_epochs,
+                                                                                                   train_acc, test_acc))
             self.scheduler.step(epoch)
 
     def train_step(self, train_dataset):
@@ -88,12 +96,12 @@ class Trainer:
             feats = self.model(feats)
             loss = self.loss_fn(feats, logits)
             loss.backward()
+            self.optimizer.step()
             losses.append(loss.item())
         avg_loss = np.mean(losses)
         print('INFO: at epoch {0} loss = {1}'.format(self.n_epochs, avg_loss))
 
     def test_step(self, test_dataset):
-        print('INFO: testing at epoch {}'.format(self.n_epochs))
         dataloader = tdata.DataLoader(test_dataset, shuffle=False, batch_size=self.test_batch_size,
                                       collate_fn=test_dataset.collate_fn, pin_memory=True, num_workers=NUM_WORKERS)
         self.model.eval()
@@ -110,11 +118,12 @@ class Trainer:
                 feats = torch.sum(feats, dim=1)
                 predictions = torch.argmax(feats, dim=1)
 
-                is_correct = torch.eq(predictions, logits)
-                n_correct += torch.sum(is_correct)
+                for i, prediction in enumerate(predictions):
+                    if prediction == logits[i]:
+                        n_correct += 1
                 n_predictions += predictions.shape[0]
             accuracy = n_correct / n_predictions
-        print('INFO: epoch {0} accuracy = {1}'.format(self.n_epochs, accuracy))
+        return accuracy
 
     def _save_checkpoint(self, checkpoint_name='model'):
         if not os.path.exists(self.checkpoint_dir):
@@ -126,7 +135,7 @@ class Trainer:
             'scheduler': self.scheduler.state_dict(),
             'n-epochs': self.n_epochs
         }
-        torch.save(checkpoint_file, save_dict)
+        torch.save(save_dict, checkpoint_file)
 
     def _load_checkpoint(self, checkpoint_name='model'):
         checkpoint_file = os.path.join(self.checkpoint_dir, checkpoint_name + '.pth')
@@ -140,27 +149,47 @@ class Trainer:
         else:
             print('INFO: checkpoint does not exist, continuing...')
 
+    def predict(self, prediction_segments):
+        dataset = PredictionDataset(prediction_segments, self.n_test_segments)
+        dataloader = tdata.DataLoader(dataset, shuffle=False, batch_size=self.test_batch_size, num_workers=NUM_WORKERS,
+                                      pin_memory=True)
+        self.model.eval()
+        all_predictions = []
+        with torch.no_grad():
+            for feats in tqdm(dataloader):
+                feats = feats.cuda(self.device)
+                feats = feats.view(-1, I3D_N_CHANNELS)
+                feats = self.model(feats)
+                feats = feats.view(-1, self.n_test_segments, breakfast.N_CLASSES)
+                feats = torch.sum(feats, dim=1)
+                predictions = torch.argmax(feats, dim=1)
+                predictions = predictions.detach().cpu().tolist()
+                all_predictions.extend(predictions)
+        return all_predictions
+
 
 class TrainDataset(tdata.Dataset):
-    def __init__(self, segment_dict, segment_labels, segment_logits):
+    def __init__(self, segments, segment_labels, segment_logits):
         super(TrainDataset, self).__init__()
-        self.segment_dicts = segment_dict
+        self.segments = segments
         self.segment_labels = segment_labels
         self.segment_logits = segment_logits
 
     def __getitem__(self, idx):
-        segment_dict = self.segment_dicts[idx]
-        logit = self.segment_dicts[idx]
+        segment_dict = self.segments[idx]
+        logit = self.segment_logits[idx]
         video_name = segment_dict['video-name']
         start, end = segment_dict['start'], segment_dict['end']
+        assert start < end, '{0} has errors, logit {1}'.format(video_name, logit)
 
         i3d_feat = breakfast.read_i3d_data(video_name, window=[start, end])
-        selected = np.random.choice(i3d_feat)
-        selected = torch.from_numpy(selected)
+        assert len(i3d_feat) > 0, '{0} has length {1}, logit {2}'.format(video_name, len(i3d_feat), logit)
+        selected_idx = np.random.choice(np.arange(len(i3d_feat)))
+        selected = torch.from_numpy(i3d_feat[selected_idx])
         return selected, logit
 
     def __len__(self):
-        return len(self.segment_dicts)
+        return len(self.segments)
 
     @staticmethod
     def collate_fn(batch):
@@ -171,27 +200,29 @@ class TrainDataset(tdata.Dataset):
 
 
 class TestDataset(TrainDataset):
-    def __init__(self, segment_dict, segment_labels, segment_logits, n_samples=25):
-        super(TrainDataset, self).__init__(segment_dict, segment_labels, segment_logits)
+    def __init__(self, segments, segment_labels, segment_logits, n_samples=25):
+        super(TestDataset, self).__init__(segments, segment_labels, segment_logits)
         self.n_samples = n_samples
 
     def __getitem__(self, idx):
-        segment_dict = self.segment_dicts[idx]
-        logit = self.segment_dicts[idx]
-        video_name = segment_dict['video-name']
-        start, end = segment_dict['start'], segment_dict['end']
+        segment = self.segments[idx]
+        logit = self.segment_logits[idx]
+        video_name = segment['video-name']
+        start, end = segment['start'], segment['end']
 
         i3d_feat = breakfast.read_i3d_data(video_name, window=[start, end])
         sample_idxs = self._get_sample_idxs(start, end)
+        # print(i3d_feat.shape, ' ', start, ' ', end, ' ', sample_idxs)
         selected = i3d_feat[sample_idxs]
+        selected = torch.from_numpy(selected)
         return selected, logit
 
     def _get_sample_idxs(self, start, end):
         n_frames = end - start
         if n_frames <= self.n_samples:
-            sample_idxs = np.arange(start, end)
-            min_dup = math.ceil(n_frames / self.n_samples)
-            sample_idxs = np.repeat(sample_idxs, min_dup)
+            sample_idxs = np.arange(n_frames)
+            min_dup = math.ceil(self.n_samples / n_frames)
+            sample_idxs = np.repeat(sample_idxs, min_dup, axis=0)
             sample_idxs = sample_idxs[:self.n_samples]
         else:
             sample_idxs = []
@@ -200,7 +231,25 @@ class TestDataset(TrainDataset):
                 if (fid / n_frames) >= (len(sample_idxs) / self.n_samples):
                     sample_idxs.append(fid)
             sample_idxs = np.array(sample_idxs)
+        sample_idxs = sample_idxs.reshape(-1)
         return sample_idxs
+
+
+class PredictionDataset(TestDataset):
+    def __init__(self, segments, n_samples):
+        super(PredictionDataset, self).__init__(segments=segments, segment_labels=None, segment_logits=None,
+                                                n_samples=n_samples)
+
+    def __getitem__(self, idx):
+        segment = self.segments[idx]
+        video_name = segment['video-name']
+        start, end = segment['start'], segment['end']
+
+        i3d_feat = breakfast.read_i3d_data(video_name, window=[start, end])
+        sample_idxs = self._get_sample_idxs(start, end)
+        selected = i3d_feat[sample_idxs]
+        selected = torch.from_numpy(selected)
+        return selected
 
 
 def _parse_args():
@@ -211,10 +260,30 @@ def _parse_args():
     return argparser.parse_args()
 
 
+def _parse_split_data(split):
+    segments, labels, logits = breakfast.get_data(split)
+    valid_segments = []
+    valid_labels = []
+    valid_logits = []
+    for i, segment in enumerate(segments):
+        start, end = segment['start'], segment['end']
+        i3d_feats = breakfast.read_i3d_data(segment['video-name'], window=[start, end])
+        if len(i3d_feats) > 0 and 48 > logits[i] > 0:  # remove walk in and walk out.
+            segment['end'] = segment['start'] + len(i3d_feats)
+            valid_segments.append(segment)
+            valid_labels.append(labels[i])
+            valid_logits.append(logits[i])
+    return [valid_segments, valid_labels, valid_logits]
+
+
 def main():
     set_determinstic_mode()
     args = _parse_args()
     trainer = Trainer(args.config, args.device)
-    train_data = breakfast.get_data('train')
-    test_data = breakfast.get_data('test')
+    train_data = _parse_split_data('train')
+    test_data = _parse_split_data('test')
     trainer.train(train_data, test_data)
+
+
+if __name__ == '__main__':
+    main()

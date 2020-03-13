@@ -16,9 +16,11 @@ SPLIT_DIR = os.path.join(DATASET_DIR, 'splits')
 TRAIN_SPLIT_FILE = os.path.join(SPLIT_DIR, 'train.split1.bundle')
 TEST_SPLIT_FILE = os.path.join(SPLIT_DIR, 'test.split1.bundle')
 
+OLD_I3D_DIR = os.path.join(DATASET_DIR, 'old-i3d')
 I3D_DIR = os.path.join(DATASET_DIR, 'i3d')
 MAPPING_FILE = os.path.join(SPLIT_DIR, 'mapping.txt')
 
+SUBMISSION_LABEL_FILE = os.path.join(DATASET_DIR, 'test_segment.txt')
 N_CLASSES = 48
 
 
@@ -84,12 +86,12 @@ def _get_video_data(videoname):
     video_labels = []
     for i, (start, end) in enumerate(windows):
         end = min(end, n_frames)
-        if end <= start:
+        if end <= (start+1):
             break
         segment = {
             'start': start,
             'end': end,
-            'video-filename': videoname
+            'video-name': videoname
         }
         video_segments.append(segment)
         video_labels.append(labels[i])
@@ -110,20 +112,69 @@ def get_data(split):
     return all_segments, all_labels, all_logits
 
 
-def read_i3d_data(videoname, window):
+def read_raw_i3d_data(videoname, window=None):
     videoname = videoname[:-4]  # remove extension
-    i3d_file = os.path.join(I3D_DIR, videoname)
+    i3d_file = os.path.join(OLD_I3D_DIR, videoname)
     with open(i3d_file, 'r') as f:
         i3d_feats = f.readlines()
 
     i3d_feats = [line.strip().split(' ') for line in i3d_feats]
     i3d_feats = np.array(i3d_feats).astype(np.float32)
-    start, end = window
-    return i3d_feats[start:end]
+    if window is not None:
+        start, end = window
+        i3d_feats = i3d_feats[start:end]
+    return i3d_feats
+
+
+def read_i3d_data(videoname, window=None):
+    videoname = videoname[:-4]
+    i3d_file = os.path.join(I3D_DIR, videoname + '.npy')
+    i3d_feats = np.load(i3d_file)
+    if window is not None:
+        start, end = window
+        i3d_feats = i3d_feats[start:end]
+    return i3d_feats
+
+
+def cvt_i3d_to_numpy():
+    if not os.path.exists(I3D_DIR):
+        os.makedirs(I3D_DIR)
+    videonames = os.listdir(OLD_I3D_DIR)
+    for videoname in tqdm(videonames):
+        i3d_file = os.path.join(I3D_DIR, videoname + '.npy')
+        if os.path.exists(i3d_file):
+            continue
+        i3d_feats = read_raw_i3d_data(videoname + '.avi')
+        np.save(i3d_file, i3d_feats)
+
+
+def get_submission_segments():
+    videonames = get_split_videonames('test')
+    with open(SUBMISSION_LABEL_FILE, 'r') as f:
+        video_timestamps = f.readlines()
+    video_timestamps = [line.strip().split(' ') for line in video_timestamps]
+    video_timestamps = [np.array(timestamps).astype(int) for timestamps in video_timestamps]
+    segments = []
+
+    for i, timestamps in enumerate(video_timestamps):
+        videoname = videonames[i]
+        n_timestamps = len(timestamps)
+        for j in range(n_timestamps - 1):
+            start = timestamps[j]
+            end = timestamps[j+1]
+            segment = {
+                'video-name': videoname + '.avi',
+                'start': start,
+                'end': end
+            }
+            segments.append(segment)
+    return segments
 
 
 if __name__ == '__main__':
-    print(get_data('test'))
-    pass
+    segments = get_submission_segments()
+    print(len(segments))
+    # cvt_i3d_to_numpy()
+    # pass
     # _read_i3d_data('P03_cam01_P03_cereals.avi')
     # print(_read_label_file(os.path.join(LABEL_DIR, 'P03.cam01.P03_cereals.avi.labels')))

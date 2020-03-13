@@ -1,7 +1,7 @@
 import os
 import random
 import torch
-import tensorflow as tf
+# import tensorflow as tf
 import numpy as np
 ROOT_DIR = os.path.join(os.path.dirname(__file__), '..', '..')
 BASE_CHECKPOINT_DIR = os.path.join(ROOT_DIR, 'checkpoints')
@@ -15,5 +15,5 @@ def set_determinstic_mode(seed=1234):
     torch.backends.cudnn.benchmark = False
     np.random.seed(seed)
     random.seed(seed)
-    tf.random.set_seed(seed)
+    # tf.random.set_seed(seed)
 
