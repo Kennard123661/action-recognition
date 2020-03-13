@@ -123,8 +123,7 @@ def _read_i3d_data(videoname, window):
 
 
 if __name__ == '__main__':
-    # _rename_videos()
-    # get_training_data()
+    print(get_data('test'))
     pass
     # _read_i3d_data('P03_cam01_P03_cereals.avi')
     # print(_read_label_file(os.path.join(LABEL_DIR, 'P03.cam01.P03_cereals.avi.labels')))

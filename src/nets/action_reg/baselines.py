@@ -11,9 +11,5 @@ class OneLayerMlp(nn.Module):
                                  nn.Linear(in_channels, n_classes, bias=False))
 
     def forward(self, inputs):
-        batch_size, n_segments, _ = inputs.shape
-        inputs = inputs.view(batch_size * n_segments, self.in_channels)
         out = self.net(inputs)
-        out = out.view(batch_size, n_segments, self.n_classes)
-        out = torch.sum(out, dim=1)  # sum over the number of segments
         return out

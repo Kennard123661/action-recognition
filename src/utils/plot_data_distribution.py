@@ -10,8 +10,8 @@ def _display_distribution(labels, n_labels):
         assert label < n_labels, 'some labels are not smaller than {}'.format(n_labels)
 
     fig = plt.hist(x=labels, bins=n_labels)
-    plt.title('Label Distribution')
-    plt.xlabel("Sorted Labels")
+    plt.title('Test Label Distribution')
+    plt.xlabel("Labels")
     plt.ylabel("Frequency")
     plt.show()
 

@@ -28,7 +28,7 @@ class Trainer:
             os.makedirs(self.checkpoint_dir)
 
         model_id = configs['model-id']
-        if model_id == '1':
+        if model_id == 'li':
             pass
         else:
             raise ValueError('no such model')
