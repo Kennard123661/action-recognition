@@ -2,7 +2,6 @@ import os
 import numpy as np
 from data import DATA_DIR
 from tqdm import tqdm
-import shutil
 
 DATASET_DIR = os.path.join(DATA_DIR, 'breakfast')
 VIDEO_DIR = os.path.join(DATASET_DIR, 'videos')
@@ -19,6 +18,8 @@ TEST_SPLIT_FILE = os.path.join(SPLIT_DIR, 'test.split1.bundle')
 
 I3D_DIR = os.path.join(DATASET_DIR, 'i3d')
 MAPPING_FILE = os.path.join(SPLIT_DIR, 'mapping.txt')
+
+N_CLASSES = 48
 
 
 def _read_mapping_file():
@@ -70,7 +71,6 @@ def _get_video_data(videoname):
     videoname = videoname + '.avi'
     labelname = videoname + '.labels'
 
-    frame_dir = os.path.join(EXTRACTED_IMAGES_DIR, videoname)
     n_video_frames_file = os.path.join(N_VIDEO_FRAMES_DIR, videoname + '.npy')
     label_file = os.path.join(LABEL_DIR, labelname)
     assert os.path.exists(label_file), 'label file {} does not exist'.format(label_file)
@@ -89,7 +89,7 @@ def _get_video_data(videoname):
         segment = {
             'start': start,
             'end': end,
-            'frame-dir': frame_dir
+            'video-filename': videoname
         }
         video_segments.append(segment)
         video_labels.append(labels[i])
@@ -110,7 +110,7 @@ def get_data(split):
     return all_segments, all_labels, all_logits
 
 
-def _read_i3d_data(videoname, window):
+def read_i3d_data(videoname, window):
     videoname = videoname[:-4]  # remove extension
     i3d_file = os.path.join(I3D_DIR, videoname)
     with open(i3d_file, 'r') as f:

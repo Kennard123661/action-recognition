@@ -1,6 +1,8 @@
 {
-  "lr": 0.1,
-  "test-batch-size": 100,
-  "train-batch-size": 100,
-  "model-id": 1
+  "lr": 0.001,
+  "test-batch-size": 256,
+  "train-batch-size": 256,
+  "model-id": "one-layer-mlp",
+  "max-epochs": 100,
+  "n-test-segments": 25
 }
