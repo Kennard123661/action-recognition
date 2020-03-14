@@ -25,6 +25,7 @@ CHECKPOINT_DIR = os.path.join(BASE_CHECKPOINT_DIR, 'baselines')
 LOG_DIR = os.path.join(BASE_LOG_DIR, 'baselines')
 CONFIG_DIR = os.path.join(BASE_CONFIG_DIR, 'baselines')
 
+
 I3D_N_CHANNELS = 400
 NUM_WORKERS = 8
 

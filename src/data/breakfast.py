@@ -27,6 +27,9 @@ MEAN_FILE = os.path.join(DATASET_DIR, 'mean.npy')
 STD_FILE = os.path.join(DATASET_DIR, 'std.npy')
 N_CLASSES = 48
 
+TENSOR_MEAN = [0.42384474, 0.39556269, 0.34748514]
+TENSOR_STD = [0.15591848, 0.14713841, 0.13312177]
+
 
 def _read_mapping_file():
     with open(MAPPING_FILE, 'r') as f:
