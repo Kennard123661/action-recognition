@@ -215,7 +215,7 @@ class TrainDataset(tdata.Dataset):
             transforms.RandomResizedCrop(input_size),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+            transforms.Normalize(breakfast.TENSOR_MEAN, breakfast.TENSOR_STD)
         ])
 
     def __getitem__(self, idx):
@@ -249,7 +249,7 @@ class TestDataset(TrainDataset):
             transforms.Resize(input_size),
             transforms.CenterCrop(input_size),
             transforms.ToTensor(),
-            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+            transforms.Normalize(breakfast.TENSOR_MEAN, breakfast.TENSOR_STD)
         ])
 
     def __getitem__(self, idx):
