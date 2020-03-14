@@ -13,5 +13,7 @@
   "lr": 0.001,
   "scheduler": "step",
   "lr-step": 50,
-  "lr-decay": 0.1
+  "lr-decay": 0.1,
+
+  "i3d-length": 400
 }

@@ -37,6 +37,7 @@ class Trainer:
         with open(config_file, 'r') as f:
             configs = json.load(f)
         self.device = int(device)
+        self.i3d_length = configs['i3d-length']
 
         self.lr = configs['lr']
         self.max_epochs = configs['max-epochs']
@@ -56,7 +57,7 @@ class Trainer:
 
         model_id = configs['model-id']
         if model_id == 'one-layer-mlp':
-            self.model = baselines.OneLayerMlp(in_channels=I3D_N_CHANNELS, n_classes=breakfast.N_CLASSES,
+            self.model = baselines.OneLayerMlp(in_channels=self.i3d_length, n_classes=breakfast.N_CLASSES,
                                                dropout=configs['dropout'])
         else:
             raise ValueError('no such model')
@@ -81,9 +82,10 @@ class Trainer:
         train_segments, train_labels, train_logits = train_data
         test_segments, test_labels, test_logits = test_data
 
-        train_dataset = TrainDataset(train_segments, train_labels, train_logits)
-        test_dataset = TestDataset(test_segments, test_labels, test_logits, n_samples=self.n_test_segments)
-        train_val_dataset = TestDataset(train_segments, train_labels, train_logits)
+        train_dataset = TrainDataset(train_segments, train_labels, train_logits, i3d_length=self.i3d_length)
+        test_dataset = TestDataset(test_segments, test_labels, test_logits, n_samples=self.n_test_segments,
+                                   i3d_length=self.i3d_length)
+        train_val_dataset = TestDataset(train_segments, train_labels, train_logits, i3d_length=self.i3d_length)
 
         start_epoch = self.n_epochs
         for epoch in range(start_epoch, self.max_epochs):
@@ -171,7 +173,7 @@ class Trainer:
             print('INFO: checkpoint does not exist, continuing...')
 
     def predict(self, prediction_segments):
-        dataset = PredictionDataset(prediction_segments, self.n_test_segments)
+        dataset = PredictionDataset(prediction_segments, self.n_test_segments, i3d_length=self.i3d_length)
         dataloader = tdata.DataLoader(dataset, shuffle=False, batch_size=self.test_batch_size, num_workers=NUM_WORKERS,
                                       pin_memory=True)
         self.model.eval()
@@ -190,11 +192,12 @@ class Trainer:
 
 
 class TrainDataset(tdata.Dataset):
-    def __init__(self, segments, segment_labels, segment_logits):
+    def __init__(self, segments, segment_labels, segment_logits, i3d_length):
         super(TrainDataset, self).__init__()
         self.segments = segments
         self.segment_labels = segment_labels
         self.segment_logits = segment_logits
+        self.i3d_length = int(i3d_length)
 
     def __getitem__(self, idx):
         segment_dict = self.segments[idx]
@@ -203,7 +206,7 @@ class TrainDataset(tdata.Dataset):
         start, end = segment_dict['start'], segment_dict['end']
         assert start < end, '{0} has errors, logit {1}'.format(video_name, logit)
 
-        i3d_feat = breakfast.read_i3d_data(video_name, window=[start, end])
+        i3d_feat = breakfast.read_i3d_data(video_name, window=[start, end], i3d_length=self.i3d_length)
         assert len(i3d_feat) > 0, '{0} has length {1}, logit {2}'.format(video_name, len(i3d_feat), logit)
         selected_idx = np.random.choice(np.arange(len(i3d_feat)))
         selected = torch.from_numpy(i3d_feat[selected_idx])
@@ -221,8 +224,8 @@ class TrainDataset(tdata.Dataset):
 
 
 class TestDataset(TrainDataset):
-    def __init__(self, segments, segment_labels, segment_logits, n_samples=25):
-        super(TestDataset, self).__init__(segments, segment_labels, segment_logits)
+    def __init__(self, segments, segment_labels, segment_logits, i3d_length, n_samples=25):
+        super(TestDataset, self).__init__(segments, segment_labels, segment_logits, i3d_length=i3d_length)
         self.n_samples = n_samples
 
     def __getitem__(self, idx):
@@ -231,7 +234,7 @@ class TestDataset(TrainDataset):
         video_name = segment['video-name']
         start, end = segment['start'], segment['end']
 
-        i3d_feat = breakfast.read_i3d_data(video_name, window=[start, end])
+        i3d_feat = breakfast.read_i3d_data(video_name, window=[start, end], i3d_length=self.i3d_length)
         sample_idxs = self._get_sample_idxs(start, end)
         # print(i3d_feat.shape, ' ', start, ' ', end, ' ', sample_idxs)
         selected = i3d_feat[sample_idxs]
@@ -257,16 +260,16 @@ class TestDataset(TrainDataset):
 
 
 class PredictionDataset(TestDataset):
-    def __init__(self, segments, n_samples):
+    def __init__(self, segments, n_samples, i3d_length):
         super(PredictionDataset, self).__init__(segments=segments, segment_labels=None, segment_logits=None,
-                                                n_samples=n_samples)
+                                                n_samples=n_samples, i3d_length=i3d_length)
 
     def __getitem__(self, idx):
         segment = self.segments[idx]
         video_name = segment['video-name']
         start, end = segment['start'], segment['end']
 
-        i3d_feat = breakfast.read_i3d_data(video_name, window=[start, end])
+        i3d_feat = breakfast.read_i3d_data(video_name, window=[start, end], i3d_length=self.i3d_length)
         sample_idxs = self._get_sample_idxs(start, end)
         selected = i3d_feat[sample_idxs]
         selected = torch.from_numpy(selected)
@@ -281,14 +284,14 @@ def _parse_args():
     return argparser.parse_args()
 
 
-def _parse_split_data(split):
+def _parse_split_data(split, feat_len):
     segments, labels, logits = breakfast.get_data(split)
     valid_segments = []
     valid_labels = []
     valid_logits = []
     for i, segment in enumerate(segments):
         start, end = segment['start'], segment['end']
-        i3d_feats = breakfast.read_i3d_data(segment['video-name'], window=[start, end])
+        i3d_feats = breakfast.read_i3d_data(segment['video-name'], window=[start, end], i3d_length=feat_len)
         if len(i3d_feats) > 0 and 48 > logits[i] > 0:  # remove walk in and walk out.
             segment['end'] = segment['start'] + len(i3d_feats)
             valid_segments.append(segment)
@@ -301,8 +304,8 @@ def main():
     set_determinstic_mode()
     args = _parse_args()
     trainer = Trainer(args.config, args.device)
-    train_data = _parse_split_data('train')
-    test_data = _parse_split_data('test')
+    train_data = _parse_split_data('train', trainer.i3d_length)
+    test_data = _parse_split_data('test', trainer.i3d_length)
     trainer.train(train_data, test_data)
 
 
