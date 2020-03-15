@@ -177,7 +177,7 @@ class Trainer:
                 feats = feats.view(-1, self.i3d_length)
                 feats = self.model(feats)
                 feats = feats.view(-1, self.n_test_segments, self.embedding_size)
-                feats = torch.sum(feats, dim=1)
+                feats = torch.mean(feats, dim=1)
                 feats = feats.detach().cpu().tolist()
 
                 predictions = []
