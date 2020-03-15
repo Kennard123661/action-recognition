@@ -19,11 +19,11 @@ if __name__ == '__main__':
 from scripts import BASE_LOG_DIR, BASE_CHECKPOINT_DIR, BASE_CONFIG_DIR
 from scripts import set_determinstic_mode
 import data.breakfast as breakfast
-from nets.action_reg import baselines
+from nets.action_reg import rnn
 
-CHECKPOINT_DIR = os.path.join(BASE_CHECKPOINT_DIR, 'baselines')
-LOG_DIR = os.path.join(BASE_LOG_DIR, 'baselines')
-CONFIG_DIR = os.path.join(BASE_CONFIG_DIR, 'baselines')
+CHECKPOINT_DIR = os.path.join(BASE_CHECKPOINT_DIR, 'rnn')
+LOG_DIR = os.path.join(BASE_LOG_DIR, 'rnn')
+CONFIG_DIR = os.path.join(BASE_CONFIG_DIR, 'rnn')
 
 
 # I3D_N_CHANNELS = 400
@@ -39,6 +39,7 @@ class Trainer:
             configs = json.load(f)
         self.device = int(device)
         self.i3d_length = configs['i3d-length']
+        self.stride = configs['stride']
 
         self.lr = configs['lr']
         self.max_epochs = configs['max-epochs']
@@ -56,13 +57,11 @@ class Trainer:
         if not os.path.exists(self.checkpoint_dir):
             os.makedirs(self.checkpoint_dir)
 
+        self.hidden_size = configs['hidden-size']
         model_id = configs['model-id']
-        if model_id == 'one-layer-mlp':
-            self.model = baselines.OneLayerMlp(in_channels=self.i3d_length, n_classes=breakfast.N_CLASSES,
-                                               dropout=configs['dropout'])
-        elif model_id == 'three-layer-mlp':
-            self.model = baselines.ThreeLayerMlp(in_channels=self.i3d_length, n_classes=breakfast.N_CLASSES,
-                                                 dropout=configs['dropout'], base_channels=configs['base-channels'])
+        if model_id == 'baseline':
+            self.model = rnn.Baseline(n_inputs=self.i3d_length, n_classes=breakfast.N_CLASSES,
+                                      hidden_size=self.hidden_size, aggregate=configs['aggregate'])
         else:
             raise ValueError('no such model')
         self.model = self.model.cuda(self.device)
@@ -89,10 +88,12 @@ class Trainer:
         train_segments, train_labels, train_logits = train_data
         test_segments, test_labels, test_logits = test_data
 
-        train_dataset = TrainDataset(train_segments, train_labels, train_logits, i3d_length=self.i3d_length)
-        test_dataset = TestDataset(test_segments, test_labels, test_logits, n_samples=self.n_test_segments,
+        train_dataset = TrainDataset(train_segments, train_labels, train_logits, i3d_length=self.i3d_length,
+                                     stride=self.stride)
+        test_dataset = TestDataset(test_segments, test_labels, test_logits, stride=self.stride,
                                    i3d_length=self.i3d_length)
-        train_val_dataset = TestDataset(train_segments, train_labels, train_logits, i3d_length=self.i3d_length)
+        train_val_dataset = TestDataset(train_segments, train_labels, train_logits, i3d_length=self.i3d_length,
+                                        stride=self.stride)
 
         start_epoch = self.n_epochs
         for epoch in range(start_epoch, self.max_epochs):
@@ -119,12 +120,13 @@ class Trainer:
                                       collate_fn=train_dataset.collate_fn, pin_memory=True, num_workers=NUM_WORKERS)
         self.model.train()
         losses = []
-        for feats, logits in tqdm(dataloader):
+        for feats, segment_lens, logits in tqdm(dataloader):
             feats = feats.cuda(self.device)
+            segment_lens = segment_lens.cuda(self.device)
             logits = logits.cuda(self.device)
 
             self.optimizer.zero_grad()
-            feats = self.model(feats)
+            feats = self.model(feats, segment_lens)
             loss = self.loss_fn(feats, logits)
             loss.backward()
             self.optimizer.step()
@@ -143,14 +145,12 @@ class Trainer:
         n_correct = 0
         n_predictions = 0
         with torch.no_grad():
-            for feats, logits in tqdm(dataloader):
+            for feats, segment_lens, logits in tqdm(dataloader):
                 feats = feats.cuda(self.device)
+                segment_lens = segment_lens.cuda(self.device)
                 logits = logits.cuda(self.device)
 
-                feats = feats.view(-1, self.i3d_length)
-                feats = self.model(feats)
-                feats = feats.view(-1, self.n_test_segments, breakfast.N_CLASSES)
-                feats = torch.sum(feats, dim=1)
+                feats = self.model(feats, segment_lens)
                 predictions = torch.argmax(feats, dim=1)
 
                 for i, prediction in enumerate(predictions):
@@ -185,7 +185,7 @@ class Trainer:
             print('INFO: checkpoint does not exist, continuing...')
 
     def predict(self, prediction_segments):
-        dataset = PredictionDataset(prediction_segments, self.n_test_segments, i3d_length=self.i3d_length)
+        dataset = PredictionDataset(prediction_segments, i3d_length=self.i3d_length, stride=self.stride)
         dataloader = tdata.DataLoader(dataset, shuffle=False, batch_size=self.test_batch_size, num_workers=NUM_WORKERS,
                                       pin_memory=True)
         self.model.eval()
@@ -204,12 +204,13 @@ class Trainer:
 
 
 class TrainDataset(tdata.Dataset):
-    def __init__(self, segments, segment_labels, segment_logits, i3d_length):
+    def __init__(self, segments, segment_labels, segment_logits, i3d_length, stride):
         super(TrainDataset, self).__init__()
         self.segments = segments
         self.segment_labels = segment_labels
         self.segment_logits = segment_logits
         self.i3d_length = int(i3d_length)
+        self.stride = int(stride)
 
     def __getitem__(self, idx):
         segment_dict = self.segments[idx]
@@ -220,61 +221,32 @@ class TrainDataset(tdata.Dataset):
 
         i3d_feat = breakfast.read_i3d_data(video_name, window=[start, end], i3d_length=self.i3d_length)
         assert len(i3d_feat) > 0, '{0} has length {1}, logit {2}'.format(video_name, len(i3d_feat), logit)
-        selected_idx = np.random.choice(np.arange(len(i3d_feat)))
-        selected = torch.from_numpy(i3d_feat[selected_idx])
-        return selected, logit
+        i3d_feat = i3d_feat[::self.stride]
+        i3d_feat = torch.from_numpy(i3d_feat)
+        n_feats = i3d_feat.shape[0]
+        return i3d_feat, n_feats, logit
 
     def __len__(self):
         return len(self.segments)
 
     @staticmethod
     def collate_fn(batch):
-        feats, logits = zip(*batch)
-        feats = torch.stack(feats)
+        feats, n_feats, logits = zip(*batch)
+        # the feats have all different lengths
+        feats = torch.cat(feats, dim=0)
+        n_feats = default_collate(n_feats)
         logits = default_collate(logits)
-        return feats, logits
+        return feats, n_feats, logits
 
 
-class TestDataset(TrainDataset):
-    def __init__(self, segments, segment_labels, segment_logits, i3d_length, n_samples=25):
-        super(TestDataset, self).__init__(segments, segment_labels, segment_logits, i3d_length=i3d_length)
-        self.n_samples = n_samples
-
-    def __getitem__(self, idx):
-        segment = self.segments[idx]
-        logit = self.segment_logits[idx]
-        video_name = segment['video-name']
-        start, end = segment['start'], segment['end']
-
-        i3d_feat = breakfast.read_i3d_data(video_name, window=[start, end], i3d_length=self.i3d_length)
-        sample_idxs = self._get_sample_idxs(start, end)
-        # print(i3d_feat.shape, ' ', start, ' ', end, ' ', sample_idxs)
-        selected = i3d_feat[sample_idxs]
-        selected = torch.from_numpy(selected)
-        return selected, logit
-
-    def _get_sample_idxs(self, start, end):
-        n_frames = end - start
-        if n_frames <= self.n_samples:
-            sample_idxs = np.arange(n_frames)
-            min_dup = math.ceil(self.n_samples / n_frames)
-            sample_idxs = np.repeat(sample_idxs, min_dup, axis=0)
-            sample_idxs = sample_idxs[:self.n_samples]
-        else:
-            sample_idxs = []
-            n_frames = end - start
-            for fid in range(n_frames):
-                if (fid / n_frames) >= (len(sample_idxs) / self.n_samples):
-                    sample_idxs.append(fid)
-            sample_idxs = np.array(sample_idxs)
-        sample_idxs = sample_idxs.reshape(-1)
-        return sample_idxs
+class TestDataset(TrainDataset):  # placeholder class
+    pass
 
 
 class PredictionDataset(TestDataset):
-    def __init__(self, segments, n_samples, i3d_length):
+    def __init__(self, segments, i3d_length, stride):
         super(PredictionDataset, self).__init__(segments=segments, segment_labels=None, segment_logits=None,
-                                                n_samples=n_samples, i3d_length=i3d_length)
+                                                i3d_length=i3d_length, stride=stride)
 
     def __getitem__(self, idx):
         segment = self.segments[idx]
@@ -282,10 +254,17 @@ class PredictionDataset(TestDataset):
         start, end = segment['start'], segment['end']
 
         i3d_feat = breakfast.read_i3d_data(video_name, window=[start, end], i3d_length=self.i3d_length)
-        sample_idxs = self._get_sample_idxs(start, end)
-        selected = i3d_feat[sample_idxs]
-        selected = torch.from_numpy(selected)
-        return selected
+        i3d_feat = i3d_feat[::self.stride]
+        i3d_feat = torch.from_numpy(i3d_feat)
+        segment_len = i3d_feat.shape[0]
+        return i3d_feat, segment_len
+
+    @staticmethod
+    def collate_fn(batch):
+        i3d_feats, segment_lens = zip(*batch)
+        i3d_feats = torch.cat(batch, dim=0)
+        segment_lens = default_collate(segment_lens)
+        return i3d_feats, segment_lens
 
 
 def _parse_args():

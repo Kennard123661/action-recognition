@@ -12,7 +12,7 @@ class Baseline(nn.Module):
         self.aggregate = str(aggregate)
         assert self.aggregate in ['last', 'mean']
 
-        self.rnn = nn.LSTMCell(self.input_size, hidden_size=self.hidden_size, bias=True)
+        self.rnn = nn.LSTMCell(self.n_inputs, hidden_size=self.hidden_size, bias=True)
         self.c0_net = nn.Sequential(
             nn.Linear(in_features=self.n_inputs, out_features=self.n_inputs, bias=False),
             nn.ReLU(inplace=True),
@@ -28,7 +28,7 @@ class Baseline(nn.Module):
 
     def _get_init_states(self, input_means):
         h0 = self.h0_net(input_means)
-        c0 = self.c0_state(input_means)
+        c0 = self.c0_net(input_means)
         return h0, c0
 
     def forward(self, input_features, segment_lengths):
@@ -48,22 +48,23 @@ class Baseline(nn.Module):
             start = end
         input_means = torch.stack(input_means, dim=0)
         segment_inputs = pad_sequence(sequences=segment_inputs, batch_first=True, padding_value=0)
+        # print(segment_inputs.shape)
         max_segment_length = segment_inputs.shape[1]
 
         ht, ct = self._get_init_states(input_means=input_means)
         h_outs = []
         for t in range(max_segment_length):
-            ht, ct = self.rnn(segment_inputs[t], (ht, ct))
+            ht, ct = self.rnn(segment_inputs[:, t], (ht, ct))
             h_outs.append(ht)
         h_outs = torch.stack(h_outs, dim=0)
 
         fc_inputs = []
-        for segment_len in segment_lengths:
-            h_outs = h_outs[:segment_len]
+        for i, segment_len in enumerate(segment_lengths):
+            h_out = h_outs[i, :segment_len]
             if self.aggregate == 'last':
-                fc_input = h_outs[-1]
+                fc_input = h_out[-1]
             elif self.aggregate == 'mean':
-                fc_input = torch.mean(h_outs, dim=0)
+                fc_input = torch.mean(h_out, dim=0)
             else:
                 raise ValueError('no such aggregation')
             fc_inputs.append(fc_input)
