@@ -22,10 +22,8 @@ class ThreeLayerMlp(nn.Module):
         self.base_channels = base_channels
         self.dropout = dropout
         self.net = nn.Sequential(nn.Linear(self.in_channels, self.base_channels, bias=False),
-                                 nn.BatchNorm1d(self.base_channels),
                                  nn.ReLU(inplace=True),
                                  nn.Linear(self.base_channels, self.base_channels, bias=False),
-                                 nn.BatchNorm1d(self.base_channels),
                                  nn.ReLU(inplace=True),
                                  nn.Dropout(self.dropout),
                                  nn.Linear(self.base_channels, self.n_classes, bias=True))
