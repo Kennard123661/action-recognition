@@ -4,11 +4,13 @@ from torch.nn.utils.rnn import pad_sequence
 
 
 class Baseline(nn.Module):
-    def __init__(self, n_inputs, n_classes, hidden_size):
+    def __init__(self, n_inputs, n_classes, hidden_size, aggregate):
         super(Baseline, self).__init__()
         self.n_inputs = int(n_inputs)
         self.n_classes = int(n_classes)
         self.hidden_size = int(hidden_size)
+        self.aggregate = str(aggregate)
+        assert self.aggregate in ['last', 'mean']
 
         self.rnn = nn.LSTMCell(self.input_size, hidden_size=self.hidden_size, bias=True)
         self.c0_net = nn.Sequential(
@@ -21,6 +23,8 @@ class Baseline(nn.Module):
             nn.ReLU(inplace=True),
             nn.Linear(in_features=self.n_inputs, out_features=self.hidden_size, bias=False)
         )
+
+        self.fc = nn.Sequential(nn.Linear(self.hidden_size, self.n_classes, bias=True))
 
     def _get_init_states(self, input_means):
         h0 = self.h0_net(input_means)
@@ -52,10 +56,19 @@ class Baseline(nn.Module):
             ht, ct = self.rnn(segment_inputs[t], (ht, ct))
             h_outs.append(ht)
         h_outs = torch.stack(h_outs, dim=0)
-        
+
+        fc_inputs = []
         for segment_len in segment_lengths:
             h_outs = h_outs[:segment_len]
-
+            if self.aggregate == 'last':
+                fc_input = h_outs[-1]
+            elif self.aggregate == 'mean':
+                fc_input = torch.mean(h_outs, dim=0)
+            else:
+                raise ValueError('no such aggregation')
+            fc_inputs.append(fc_input)
+        fc_inputs = torch.stack(fc_inputs, dim=0)
+        return self.fc(fc_inputs)
 
 
 
