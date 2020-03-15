@@ -44,7 +44,7 @@ class Baseline(nn.Module):
             end = start + segment_len
             segment_features = input_features[start:end]
             segment_inputs.append(segment_features)
-            input_means.append(torch.sum(segment_features, dim=0))
+            input_means.append(torch.mean(segment_features, dim=0))
             start = end
         input_means = torch.stack(input_means, dim=0)
         segment_inputs = pad_sequence(sequences=segment_inputs, batch_first=True, padding_value=0)
