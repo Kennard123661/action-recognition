@@ -1,0 +1,23 @@
+{
+  "test-batch-size": 256,
+  "model-id": "one-layer-mlp",
+  "dropout": 0,
+
+  "max-epochs": 100,
+  "n-test-segments": 25,
+  "optim": "adam",
+  "momentum": 0.9,
+  "nesterov": 0,
+
+  "embedding-size": 256,
+  "n-iterations": 40,
+  "n-class-samples": 5,
+  "distance-metric": "cosine",
+
+  "lr": 0.001,
+  "scheduler": "step",
+  "lr-step": 50,
+  "lr-decay": 0.1,
+
+  "i3d-length": 400
+}
