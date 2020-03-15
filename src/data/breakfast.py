@@ -142,7 +142,7 @@ def read_i3d_data(videoname, i3d_length, window=None):
     else:
         raise ValueError('no such feature length')
     i3d_file = os.path.join(i3d_dir, videoname + '.npy')
-    i3d_feats = np.load(i3d_file)
+    i3d_feats = np.load(i3d_file).astype(np.float32)
     if window is not None:
         start, end = window
         i3d_feats = i3d_feats[start:end]

@@ -26,8 +26,8 @@ LOG_DIR = os.path.join(BASE_LOG_DIR, 'baselines')
 CONFIG_DIR = os.path.join(BASE_CONFIG_DIR, 'baselines')
 
 
-I3D_N_CHANNELS = 400
-NUM_WORKERS = 8
+# I3D_N_CHANNELS = 400
+NUM_WORKERS = 2
 
 
 class Trainer:
@@ -60,6 +60,9 @@ class Trainer:
         if model_id == 'one-layer-mlp':
             self.model = baselines.OneLayerMlp(in_channels=self.i3d_length, n_classes=breakfast.N_CLASSES,
                                                dropout=configs['dropout'])
+        elif model_id == 'three-layer-mlp':
+            self.model = baselines.ThreeLayerMlp(in_channels=self.i3d_length, n_classes=breakfast.N_CLASSES,
+                                                 dropout=configs['dropout'], base_channels=configs['base-channels'])
         else:
             raise ValueError('no such model')
         self.model = self.model.cuda(self.device)
@@ -75,6 +78,9 @@ class Trainer:
         if configs['scheduler'] == 'step':
             self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=configs['lr-step'],
                                                        gamma=configs['lr-decay'])
+        elif configs['scheduler'] == 'plateau':
+            self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min',
+                                                                  patience=configs['lr-step'])
         else:
             raise ValueError('no such scheduler')
         self._load_checkpoint()
@@ -103,7 +109,9 @@ class Trainer:
                 'test': test_acc
             }
             self.tboard_writer.add_scalars('accuracy', log_dict, self.n_epochs)
-            self.scheduler.step(epoch)
+
+            if isinstance(self.scheduler, optim.lr_scheduler.StepLR):
+                self.scheduler.step(epoch)
 
     def train_step(self, train_dataset):
         print('INFO: training at epoch {}'.format(self.n_epochs))
@@ -125,6 +133,9 @@ class Trainer:
         print('INFO: at epoch {0} loss = {1}'.format(self.n_epochs, avg_loss))
         self.tboard_writer.add_scalar('loss', avg_loss, self.n_epochs)
 
+        if isinstance(self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):
+            self.scheduler.step(avg_loss)
+
     def test_step(self, test_dataset):
         dataloader = tdata.DataLoader(test_dataset, shuffle=False, batch_size=self.test_batch_size,
                                       collate_fn=test_dataset.collate_fn, pin_memory=True, num_workers=NUM_WORKERS)
@@ -136,7 +147,7 @@ class Trainer:
                 feats = feats.cuda(self.device)
                 logits = logits.cuda(self.device)
 
-                feats = feats.view(-1, I3D_N_CHANNELS)
+                feats = feats.view(-1, self.i3d_length)
                 feats = self.model(feats)
                 feats = feats.view(-1, self.n_test_segments, breakfast.N_CLASSES)
                 feats = torch.sum(feats, dim=1)
@@ -182,7 +193,7 @@ class Trainer:
         with torch.no_grad():
             for feats in tqdm(dataloader):
                 feats = feats.cuda(self.device)
-                feats = feats.view(-1, I3D_N_CHANNELS)
+                feats = feats.view(-1, self.i3d_length)
                 feats = self.model(feats)
                 feats = feats.view(-1, self.n_test_segments, breakfast.N_CLASSES)
                 feats = torch.sum(feats, dim=1)
@@ -290,7 +301,7 @@ def _parse_split_data(split, feat_len):
     valid_segments = []
     valid_labels = []
     valid_logits = []
-    for i, segment in enumerate(segments):
+    for i, segment in enumerate(tqdm(segments)):
         start, end = segment['start'], segment['end']
         i3d_feats = breakfast.read_i3d_data(segment['video-name'], window=[start, end], i3d_length=feat_len)
         if len(i3d_feats) > 0 and 48 > logits[i] > 0:  # remove walk in and walk out.
