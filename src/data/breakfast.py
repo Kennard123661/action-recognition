@@ -135,17 +135,32 @@ def read_raw_i3d_data(videoname, window=None):
 
 def read_i3d_data(videoname, i3d_length, window=None):
     videoname = videoname[:-4]
-    if i3d_length == 400:
-        i3d_dir = I3D_DIR
-    elif i3d_length == 2048:
-        i3d_dir = I3D_2048_DIR
+    if i3d_length == 400 or i3d_length == 2048:
+        if i3d_length == 400:
+            i3d_dir = I3D_DIR
+        elif i3d_length == 2048:
+            i3d_dir = I3D_2048_DIR
+        else:
+            raise ValueError('no such feature length')
+        i3d_file = os.path.join(i3d_dir, videoname + '.npy')
+        i3d_feats = np.load(i3d_file).astype(np.float32)
+        if window is not None:
+            start, end = window
+            i3d_feats = i3d_feats[start:end]
+    elif i3d_length == (2048 + 400):
+        i3d_file = os.path.join(I3D_2048_DIR, videoname + '.npy')
+        i3d_feats = np.load(i3d_file).astype(np.float32)
+        if window is not None:
+            start, end = window
+            i3d_feats = i3d_feats[start:end]
+        i3d_file = os.path.join(I3D_2048_DIR, videoname + '.npy')
+        other_i3d_feats = np.load(i3d_file).astype(np.float32)
+        if window is not None:
+            start, end = window
+            other_i3d_feats = other_i3d_feats[start:end]
+        i3d_feats = np.concatenate([i3d_feats, other_i3d_feats])
     else:
         raise ValueError('no such feature length')
-    i3d_file = os.path.join(i3d_dir, videoname + '.npy')
-    i3d_feats = np.load(i3d_file).astype(np.float32)
-    if window is not None:
-        start, end = window
-        i3d_feats = i3d_feats[start:end]
     return i3d_feats
 
 
