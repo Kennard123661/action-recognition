@@ -22,14 +22,13 @@ if __name__ == '__main__':
 from scripts import BASE_LOG_DIR, BASE_CHECKPOINT_DIR, BASE_CONFIG_DIR
 from scripts import set_determinstic_mode
 import data.breakfast as breakfast
-from utils.video_utils import ToTensor, ToZeroOne
+from utils.video_utils import ToTensorVideo, ToZeroOneVideo, ResizeVideo
 
-CHECKPOINT_DIR = os.path.join(BASE_CHECKPOINT_DIR, 'baselines')
-LOG_DIR = os.path.join(BASE_LOG_DIR, 'baselines')
-CONFIG_DIR = os.path.join(BASE_CONFIG_DIR, 'baselines')
+CHECKPOINT_DIR = os.path.join(BASE_CHECKPOINT_DIR, 'r2plus1d')
+LOG_DIR = os.path.join(BASE_LOG_DIR, 'r2plus1d')
+CONFIG_DIR = os.path.join(BASE_CONFIG_DIR, 'r2plus1d')
 
 
-# I3D_N_CHANNELS = 400
 NUM_WORKERS = 2
 
 
@@ -41,7 +40,6 @@ class Trainer:
         with open(config_file, 'r') as f:
             configs = json.load(f)
         self.device = int(device)
-        self.i3d_length = configs['i3d-length']
 
         self.lr = configs['lr']
         self.max_epochs = configs['max-epochs']
@@ -61,10 +59,25 @@ class Trainer:
 
         model_id = configs['model-id']
         assert model_id in R2PLU1D_MODELS, 'model must be one of {}'.format(R2PLU1D_MODELS)
-        self.n_images = int(model_id.split('_')[2])
-        self.model = torch.hub.load("moabitcoin/ig65m-pytorch", model_id, num_classes=breakfast.N_CLASSES,
-                                    pretrained=True)
+        self.segment_length = int(model_id.split('_')[2])
+        pretrained_ds = model_id.split('_')[-1]
+        if pretrained_ds == 'kinetics':
+            n_pretrained_classes = 400
+        elif pretrained_ds == 'ig65m':
+            if self.segment_length == 32:
+                n_pretrained_classes = 359
+            elif self.segment_length == 8:
+                n_pretrained_classes = 487
+            else:
+                raise ValueError('no such segment length')
+        else:
+            raise ValueError('no such model id')
 
+        self.model = torch.hub.load("moabitcoin/ig65m-pytorch", model_id, num_classes=n_pretrained_classes,
+                                    pretrained=True)
+        # replace the last layer.
+        self.model.fc = nn.Linear(self.model.fc.in_features, out_features=breakfast.N_CLASSES,
+                                  bias=self.model.fc.bias is not None)
         self.model = self.model.cuda(self.device)
         self.loss_fn = nn.CrossEntropyLoss().cuda(self.device)
         if configs['optim'] == 'adam':
@@ -84,15 +97,21 @@ class Trainer:
         else:
             raise ValueError('no such scheduler')
         self._load_checkpoint()
+        self.input_size = configs['input-size']
+        self.frame_stride = configs['frame-stride']
 
     def train(self, train_data, test_data):
         train_segments, train_labels, train_logits = train_data
         test_segments, test_labels, test_logits = test_data
 
-        train_dataset = TrainDataset(train_segments, train_labels, train_logits, i3d_length=self.i3d_length)
-        test_dataset = TestDataset(test_segments, test_labels, test_logits, n_samples=self.n_test_segments,
-                                   i3d_length=self.i3d_length)
-        train_val_dataset = TestDataset(train_segments, train_labels, train_logits, i3d_length=self.i3d_length)
+        train_dataset = TrainDataset(train_segments, train_labels, train_logits, segment_length=self.segment_length,
+                                     input_size=self.input_size, frame_stride=self.frame_stride)
+        test_dataset = TestDataset(test_segments, test_labels, test_logits, segment_length=self.segment_length,
+                                   input_size=self.input_size, frame_stride=self.frame_stride,
+                                   n_test_segments=self.n_test_segments)
+        train_val_dataset = TestDataset(train_segments, train_labels, train_logits, segment_length=self.segment_length,
+                                        input_size=self.input_size, frame_stride=self.frame_stride,
+                                        n_test_segments=self.n_test_segments)
 
         start_epoch = self.n_epochs
         for epoch in range(start_epoch, self.max_epochs):
@@ -122,7 +141,6 @@ class Trainer:
         for feats, logits in tqdm(dataloader):
             feats = feats.cuda(self.device)
             logits = logits.cuda(self.device)
-            # print(feats.shape)
 
             self.optimizer.zero_grad()
             feats = self.model(feats)
@@ -144,15 +162,22 @@ class Trainer:
         n_correct = 0
         n_predictions = 0
         with torch.no_grad():
-            for feats, logits in tqdm(dataloader):
-                feats = feats.cuda(self.device)
-                logits = logits.cuda(self.device)
+            for feats, n_segments, idxs in tqdm(dataloader):
+                feats = feats.cuda(self.device)  # BN x C x T x H x W
+                idxs = idxs.detach().cpu().tolist()
+                logits = np.array(test_dataset.segment_logits)[idxs]
 
-                feats = feats.view(-1, self.i3d_length)
-                feats = self.model(feats)
-                feats = feats.view(-1, self.n_test_segments, breakfast.N_CLASSES)
-                feats = torch.sum(feats, dim=1)
-                predictions = torch.argmax(feats, dim=1)
+                feats = self.model(feats)  # BN x n_classes
+                predictions = []
+                start = 0
+                for n_segment in n_segments:
+                    end = start + n_segment
+                    prediction = torch.sum(feats[start:end], dim=0)  # sum over the segments
+                    predictions.append(prediction)
+                    start = end
+                predictions = torch.stack(predictions, dim=0)
+                predictions = torch.argmax(predictions, dim=1)
+                logits = torch.from_numpy(logits)
 
                 for i, prediction in enumerate(predictions):
                     if prediction == logits[i]:
@@ -205,20 +230,21 @@ class Trainer:
 
 
 class TrainDataset(tdata.Dataset):
-    def __init__(self, segments, segment_labels, segment_logits, n_images, input_size, stride=1):
+    def __init__(self, segments, segment_labels, segment_logits, segment_length, input_size, frame_stride=1):
         super(TrainDataset, self).__init__()
         self.segments = segments
         self.segment_labels = segment_labels
         self.segment_logits = segment_logits
-        self.n_images = int(n_images)
+        self.segment_length = int(segment_length)
         self.input_size = int(input_size)
-        self.stride = int(stride)
+        self.frame_stride = int(frame_stride)
 
         self.transforms = Compose([
-            ToTensor(),
+            ToTensorVideo(),
+            ResizeVideo(input_size),
             transforms.RandomResizedCropVideo(size=input_size),
             transforms.RandomHorizontalFlipVideo(),
-            ToZeroOne(),
+            ToZeroOneVideo(),
             transforms.NormalizeVideo(breakfast.TENSOR_MEAN, breakfast.TENSOR_STD)
         ])
 
@@ -230,28 +256,31 @@ class TrainDataset(tdata.Dataset):
         assert start < end, '{0} has errors, logit {1}'.format(video_name, logit)
 
         n_frames = end - start
-        if n_frames < self.n_images:
+        if n_frames < self.segment_length:
             frame_ids = np.arange(start, end).tolist()
-            n_repeats = self.n_images // n_frames
-            n_excess = self.n_images - n_frames * n_repeats
+            n_repeats = self.segment_length // n_frames
+            n_excess = self.segment_length - n_frames * n_repeats
 
             frame_ids = np.concatenate([np.repeat(frame_ids[:n_excess], n_repeats+1),
                                         np.repeat(frame_ids[n_excess:], n_repeats)],
                                        axis=0)
             unique_frame_ids = np.arange(start, end)
             unique_frames = [breakfast.read_frame(video_name, frame_id) for frame_id in unique_frame_ids]
-            frames = unique_frames[frame_ids - start]
+            frames = []
+            for frame_id in frame_ids:
+                frame_idx = frame_id - start
+                frames.append(unique_frames[frame_idx])
         else:
-            if n_frames < self.n_images * self.stride:
-                max_stride = n_frames // self.n_images
+            if n_frames < self.segment_length * self.frame_stride:
+                max_stride = n_frames // self.segment_length
             else:
-                max_stride = self.stride
-            max_start = n_frames - max_stride * self.n_images
-            if max_start == start:
+                max_stride = self.frame_stride
+            max_start = n_frames - max_stride * self.segment_length
+            if max_start <= start:
                 start_frame = start
             else:
                 start_frame = np.random.choice(np.arange(start, max_start))
-            frame_ids = np.arange(start_frame, end, max_stride)
+            frame_ids = np.arange(start_frame, end, max_stride)[:self.segment_length]
             frames = [breakfast.read_frame(video_name, frame_id) for frame_id in frame_ids]
         frames = self.transforms(frames)
         return frames, logit
@@ -268,31 +297,28 @@ class TrainDataset(tdata.Dataset):
 
 
 class TestDataset(TrainDataset):
-    def __init__(self, segments, segment_labels, segment_logits, n_images, input_size, stride=1, n_samples=25):
-        super(TestDataset, self).__init__(segments, segment_labels, segment_logits, n_images, input_size, stride)
-        self.n_samples = n_samples
+    def __init__(self, segments, segment_labels, segment_logits, segment_length, input_size, frame_stride=1,
+                 n_test_segments=25):
+        super(TestDataset, self).__init__(segments, segment_labels, segment_logits, segment_length, input_size,
+                                          frame_stride)
+        self.n_test_segments = n_test_segments
         self.transforms = Compose([
-            ToTensor(),
-            transforms.RandomResizedCropVideo(size=input_size),
+            ToTensorVideo(),
+            ResizeVideo(input_size),
+            transforms.CenterCropVideo(crop_size=input_size),
             transforms.RandomHorizontalFlipVideo(),
-            ToZeroOne(),
+            ToZeroOneVideo(),
             transforms.NormalizeVideo(breakfast.TENSOR_MEAN, breakfast.TENSOR_STD)
         ])
 
-    def __getitem__(self, idx):
-        segment_dict = self.segments[idx]
-        logit = self.segment_logits[idx]
-        video_name = segment_dict['video-name']
-        start, end = segment_dict['start'], segment_dict['end']
-        assert start < end, '{0} has errors, logit {1}'.format(video_name, logit)
-
+    def _load_segments(self, video_name, start, end):
         n_frames = end - start
-        if n_frames < self.n_images:
+        if n_frames < self.segment_length:
             frame_ids = np.arange(start, end)
-            n_repeats = self.n_images // n_frames
-            n_excess = self.n_images - n_frames * n_repeats
+            n_repeats = self.segment_length // n_frames
+            n_excess = self.segment_length - n_frames * n_repeats
 
-            frame_ids = np.concatenate([np.repeat(frame_ids[:n_excess], n_repeats+1),
+            frame_ids = np.concatenate([np.repeat(frame_ids[:n_excess], n_repeats + 1),
                                         np.repeat(frame_ids[n_excess:], n_repeats)],
                                        axis=0)
             unique_frame_ids = np.arange(start, end)
@@ -300,59 +326,56 @@ class TestDataset(TrainDataset):
             video_segments = unique_frames[frame_ids - start]
             video_segments = self.transforms(video_segments).unsqueeze(0)  # 1 x B x C x T x H x W
         else:
-            if n_frames < self.n_images * self.stride:
-                max_stride = n_frames // self.n_images
+            if n_frames < self.segment_length * self.frame_stride:
+                max_stride = n_frames // self.segment_length
             else:
-                max_stride = self.stride
-            max_start = n_frames - max_stride * self.n_images
+                max_stride = self.frame_stride
+            max_start = n_frames - max_stride * self.segment_length
 
-            if max_start == start:
+            if max_start <= start:
                 start_frames = [start]
             else:
-                start_frames = np.random.choice(np.arange(start, max_start))
-                if len(start_frames) > self.n_samples:
+                start_frames = np.arange(start, max_start)
+                if len(start_frames) > self.n_test_segments:
                     sampled_start_frames = []
                     n_start_frames = len(start_frames)
                     for fi, start_frame in enumerate(start_frames):
-                        if (fi / n_start_frames) >= (len(sampled_start_frames) / self.n_samples):
+                        if (fi / n_start_frames) >= (len(sampled_start_frames) / self.n_test_segments):
                             sampled_start_frames.append(start_frame)
-                            if len(sampled_start_frames) == self.n_samples:
+                            if len(sampled_start_frames) == self.n_test_segments:
                                 break
                     start_frames = np.array(sampled_start_frames)
 
             video_segments = []
             for start_frame in start_frames:
-                frame_ids = np.arange(start_frame, end, max_stride)
+                frame_ids = np.arange(start_frame, end, max_stride)[:self.segment_length]
                 frames = [breakfast.read_frame(video_name, frame_id) for frame_id in frame_ids]
                 frames = self.transforms(frames)
                 video_segments.append(frames)
             video_segments = torch.stack(video_segments, dim=0)  # N x C x T x H x W
+        return video_segments
+
+    def __getitem__(self, idx):
+        segment_dict = self.segments[idx]
+        logit = self.segment_logits[idx]
+        video_name = segment_dict['video-name']
+        start, end = segment_dict['start'], segment_dict['end']
+        assert start < end, '{0} has errors, logit {1}'.format(video_name, logit)
+        video_segments = self._load_segments(video_name, start, end)
         n_video_segments = video_segments.shape[0]
         return video_segments, n_video_segments, idx
 
     @staticmethod
-    def _collate_fn(batch):
+    def collate_fn(batch):
         video_segments, n_video_segments, video_idxs = zip(*batch)
         video_segments = torch.cat(video_segments, dim=0)  # BN x C x T x H x W
         n_video_segments = default_collate(n_video_segments)  # B
         video_idxs = default_collate(video_idxs)  # B 
         return video_segments, n_video_segments, video_idxs
 
+
 class PredictionDataset(TestDataset):
-    def __init__(self, segments, n_samples, i3d_length):
-        super(PredictionDataset, self).__init__(segments=segments, segment_labels=None, segment_logits=None,
-                                                n_samples=n_samples, i3d_length=i3d_length)
-
-    def __getitem__(self, idx):
-        segment = self.segments[idx]
-        video_name = segment['video-name']
-        start, end = segment['start'], segment['end']
-
-        i3d_feat = breakfast.read_i3d_data(video_name, window=[start, end], i3d_length=self.n_images)
-        sample_idxs = self._get_sample_idxs(start, end)
-        selected = i3d_feat[sample_idxs]
-        selected = torch.from_numpy(selected)
-        return selected
+    pass
 
 
 def _parse_args():
@@ -363,17 +386,20 @@ def _parse_args():
     return argparser.parse_args()
 
 
-def _parse_split_data(split, feat_len):
+def _parse_split_data(split):
     segments, labels, logits = breakfast.get_data(split)
     valid_segments = []
     valid_labels = []
     valid_logits = []
     for i, segment in enumerate(tqdm(segments)):
         start, end = segment['start'], segment['end']
-        i3d_feats = breakfast.read_i3d_data(segment['video-name'], window=[start, end], i3d_length=feat_len)
-        # print(np.array(i3d_feats).shape)
-        if len(i3d_feats) > 0 and 48 > logits[i] > 0:  # remove walk in and walk out.
-            segment['end'] = segment['start'] + len(i3d_feats)
+        video_name = segment['video-name']
+        video_dir = os.path.join(breakfast.EXTRACTED_IMAGES_DIR, video_name)
+        n_video_frames = len(os.listdir(video_dir))
+        end = min(n_video_frames, end)
+        n_frames = end - start
+        if n_frames > 0 and 48 > logits[i] > 0:  # remove walk in and walk out.
+            segment['end'] = end
             valid_segments.append(segment)
             valid_labels.append(labels[i])
             valid_logits.append(logits[i])
@@ -384,12 +410,12 @@ def main():
     set_determinstic_mode()
     args = _parse_args()
     trainer = Trainer(args.config, args.device)
-    train_data = _parse_split_data('train', trainer.i3d_length)
-    test_data = _parse_split_data('test', trainer.i3d_length)
+    train_data = _parse_split_data('train')
+    test_data = _parse_split_data('test')
     trainer.train(train_data, test_data)
 
 
 if __name__ == '__main__':
-    # main()
-    print(torch.hub.list("moabitcoin/ig65m-pytorch"))
-    model = torch.hub.load("moabitcoin/ig65m-pytorch", "r2plus1d_34_32_ig65m", num_classes=359, pretrained=True)
+    main()
+    # print(torch.hub.list("moabitcoin/ig65m-pytorch"))
+    # model = torch.hub.load("moabitcoin/ig65m-pytorch", "r2plus1d_34_32_ig65m", num_classes=359, pretrained=True)

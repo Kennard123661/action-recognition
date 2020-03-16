@@ -1,0 +1,20 @@
+{
+  "test-batch-size": 2,
+  "train-batch-size": 32,
+  "model-id": "r2plus1d_34_32_kinetics",
+  "dropout": 0,
+
+  "max-epochs": 100,
+  "n-test-segments": 10,
+  "optim": "adam",
+  "momentum": 0.9,
+  "nesterov": 0,
+
+  "lr": 0.001,
+  "scheduler": "step",
+  "lr-step": 50,
+  "lr-decay": 0.1,
+
+  "input-size": 112,
+  "frame-stride": 1
+}
