@@ -122,6 +122,7 @@ class Trainer:
         for feats, logits in tqdm(dataloader):
             feats = feats.cuda(self.device)
             logits = logits.cuda(self.device)
+            # print(feats.shape)
 
             self.optimizer.zero_grad()
             feats = self.model(feats)
@@ -210,6 +211,8 @@ class TrainDataset(tdata.Dataset):
         self.segment_labels = segment_labels
         self.segment_logits = segment_logits
         self.i3d_length = int(i3d_length)
+        # print(self.i3d_length)
+        # exit()
 
     def __getitem__(self, idx):
         segment_dict = self.segments[idx]
@@ -304,6 +307,7 @@ def _parse_split_data(split, feat_len):
     for i, segment in enumerate(tqdm(segments)):
         start, end = segment['start'], segment['end']
         i3d_feats = breakfast.read_i3d_data(segment['video-name'], window=[start, end], i3d_length=feat_len)
+        # print(np.array(i3d_feats).shape)
         if len(i3d_feats) > 0 and 48 > logits[i] > 0:  # remove walk in and walk out.
             segment['end'] = segment['start'] + len(i3d_feats)
             valid_segments.append(segment)
