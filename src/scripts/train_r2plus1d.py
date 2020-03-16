@@ -22,7 +22,7 @@ if __name__ == '__main__':
 from scripts import BASE_LOG_DIR, BASE_CHECKPOINT_DIR, BASE_CONFIG_DIR
 from scripts import set_determinstic_mode
 import data.breakfast as breakfast
-from nets.action_reg import baselines
+from utils.video_utils import ToTensor, ToZeroOne
 
 CHECKPOINT_DIR = os.path.join(BASE_CHECKPOINT_DIR, 'baselines')
 LOG_DIR = os.path.join(BASE_LOG_DIR, 'baselines')
@@ -215,9 +215,10 @@ class TrainDataset(tdata.Dataset):
         self.stride = int(stride)
 
         self.transforms = Compose([
+            ToTensor(),
             transforms.RandomResizedCropVideo(size=input_size),
             transforms.RandomHorizontalFlipVideo(),
-            transforms.ToTensorVideo(),
+            ToZeroOne(),
             transforms.NormalizeVideo(breakfast.TENSOR_MEAN, breakfast.TENSOR_STD)
         ])
 
@@ -252,7 +253,7 @@ class TrainDataset(tdata.Dataset):
                 start_frame = np.random.choice(np.arange(start, max_start))
             frame_ids = np.arange(start_frame, end, max_stride)
             frames = [breakfast.read_frame(video_name, frame_id) for frame_id in frame_ids]
-        frames = torch.from_numpy(frames)
+        frames = self.transforms(frames)
         return frames, logit
 
     def __len__(self):
@@ -261,46 +262,81 @@ class TrainDataset(tdata.Dataset):
     @staticmethod
     def collate_fn(batch):
         feats, logits = zip(*batch)
-        feats = torch.stack(feats)
+        feats = default_collate(feats)
         logits = default_collate(logits)
         return feats, logits
 
 
 class TestDataset(TrainDataset):
-    def __init__(self, segments, segment_labels, segment_logits, i3d_length, n_samples=25):
-        super(TestDataset, self).__init__(segments, segment_labels, segment_logits, i3d_length=i3d_length)
+    def __init__(self, segments, segment_labels, segment_logits, n_images, input_size, stride=1, n_samples=25):
+        super(TestDataset, self).__init__(segments, segment_labels, segment_logits, n_images, input_size, stride)
         self.n_samples = n_samples
+        self.transforms = Compose([
+            ToTensor(),
+            transforms.RandomResizedCropVideo(size=input_size),
+            transforms.RandomHorizontalFlipVideo(),
+            ToZeroOne(),
+            transforms.NormalizeVideo(breakfast.TENSOR_MEAN, breakfast.TENSOR_STD)
+        ])
 
     def __getitem__(self, idx):
-        segment = self.segments[idx]
+        segment_dict = self.segments[idx]
         logit = self.segment_logits[idx]
-        video_name = segment['video-name']
-        start, end = segment['start'], segment['end']
+        video_name = segment_dict['video-name']
+        start, end = segment_dict['start'], segment_dict['end']
+        assert start < end, '{0} has errors, logit {1}'.format(video_name, logit)
 
-        i3d_feat = breakfast.read_i3d_data(video_name, window=[start, end], i3d_length=self.n_images)
-        sample_idxs = self._get_sample_idxs(start, end)
-        # print(i3d_feat.shape, ' ', start, ' ', end, ' ', sample_idxs)
-        selected = i3d_feat[sample_idxs]
-        selected = torch.from_numpy(selected)
-        return selected, logit
-
-    def _get_sample_idxs(self, start, end):
         n_frames = end - start
-        if n_frames <= self.n_samples:
-            sample_idxs = np.arange(n_frames)
-            min_dup = math.ceil(self.n_samples / n_frames)
-            sample_idxs = np.repeat(sample_idxs, min_dup, axis=0)
-            sample_idxs = sample_idxs[:self.n_samples]
-        else:
-            sample_idxs = []
-            n_frames = end - start
-            for fid in range(n_frames):
-                if (fid / n_frames) >= (len(sample_idxs) / self.n_samples):
-                    sample_idxs.append(fid)
-            sample_idxs = np.array(sample_idxs)
-        sample_idxs = sample_idxs.reshape(-1)
-        return sample_idxs
+        if n_frames < self.n_images:
+            frame_ids = np.arange(start, end)
+            n_repeats = self.n_images // n_frames
+            n_excess = self.n_images - n_frames * n_repeats
 
+            frame_ids = np.concatenate([np.repeat(frame_ids[:n_excess], n_repeats+1),
+                                        np.repeat(frame_ids[n_excess:], n_repeats)],
+                                       axis=0)
+            unique_frame_ids = np.arange(start, end)
+            unique_frames = [breakfast.read_frame(video_name, frame_id) for frame_id in unique_frame_ids]
+            video_segments = unique_frames[frame_ids - start]
+            video_segments = self.transforms(video_segments).unsqueeze(0)  # 1 x B x C x T x H x W
+        else:
+            if n_frames < self.n_images * self.stride:
+                max_stride = n_frames // self.n_images
+            else:
+                max_stride = self.stride
+            max_start = n_frames - max_stride * self.n_images
+
+            if max_start == start:
+                start_frames = [start]
+            else:
+                start_frames = np.random.choice(np.arange(start, max_start))
+                if len(start_frames) > self.n_samples:
+                    sampled_start_frames = []
+                    n_start_frames = len(start_frames)
+                    for fi, start_frame in enumerate(start_frames):
+                        if (fi / n_start_frames) >= (len(sampled_start_frames) / self.n_samples):
+                            sampled_start_frames.append(start_frame)
+                            if len(sampled_start_frames) == self.n_samples:
+                                break
+                    start_frames = np.array(sampled_start_frames)
+
+            video_segments = []
+            for start_frame in start_frames:
+                frame_ids = np.arange(start_frame, end, max_stride)
+                frames = [breakfast.read_frame(video_name, frame_id) for frame_id in frame_ids]
+                frames = self.transforms(frames)
+                video_segments.append(frames)
+            video_segments = torch.stack(video_segments, dim=0)  # N x C x T x H x W
+        n_video_segments = video_segments.shape[0]
+        return video_segments, n_video_segments, idx
+
+    @staticmethod
+    def _collate_fn(batch):
+        video_segments, n_video_segments, video_idxs = zip(*batch)
+        video_segments = torch.cat(video_segments, dim=0)  # BN x C x T x H x W
+        n_video_segments = default_collate(n_video_segments)  # B
+        video_idxs = default_collate(video_idxs)  # B 
+        return video_segments, n_video_segments, video_idxs
 
 class PredictionDataset(TestDataset):
     def __init__(self, segments, n_samples, i3d_length):
