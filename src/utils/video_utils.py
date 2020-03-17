@@ -16,6 +16,7 @@ class ToTensorVideo:
         clip = torch.stack(clip, dim=0).float().permute(dims=(3, 0, 1, 2))  # C x T x H x W
         return clip
 
+
 class ToZeroOneVideo:
     def __call__(self, clip):
         """
@@ -37,5 +38,6 @@ class ResizeVideo:
 
     def __call__(self, clip):
         assert F._is_tensor_video_clip(clip)
-        clip = F.resize(clip, self.size, interpolation_mode=self.interpolation_mode)
-        return clip
+        return torch.nn.functional.interpolate(
+            clip, size=self.size, mode=self.interpolation_mode, align_corners=False
+        )

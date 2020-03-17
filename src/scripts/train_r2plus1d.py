@@ -268,7 +268,7 @@ class TrainDataset(tdata.Dataset):
             unique_frames = [breakfast.read_frame(video_name, frame_id) for frame_id in unique_frame_ids]
             frames = []
             for frame_id in frame_ids:
-                frame_idx = frame_id - start
+                frame_idx = int(frame_id - start)
                 frames.append(unique_frames[frame_idx])
         else:
             if n_frames < self.segment_length * self.frame_stride:
@@ -306,7 +306,6 @@ class TestDataset(TrainDataset):
             ToTensorVideo(),
             ResizeVideo(input_size),
             transforms.CenterCropVideo(crop_size=input_size),
-            transforms.RandomHorizontalFlipVideo(),
             ToZeroOneVideo(),
             transforms.NormalizeVideo(breakfast.TENSOR_MEAN, breakfast.TENSOR_STD)
         ])
