@@ -116,10 +116,10 @@ class Trainer:
         start_epoch = self.n_epochs
         for epoch in range(start_epoch, self.max_epochs):
             self.n_epochs += 1
+            train_acc = self.test_step(train_val_dataset)
             self.train_step(train_dataset)
             self._save_checkpoint('model-{}'.format(self.n_epochs))
             self._save_checkpoint()  # update the latest model
-            train_acc = self.test_step(train_val_dataset)
             test_acc = self.test_step(test_dataset)
             print('INFO: at epoch {}, the train accuracy is {} and the test accuracy is {}'.format(self.n_epochs,
                                                                                                    train_acc, test_acc))
@@ -322,7 +322,10 @@ class TestDataset(TrainDataset):
                                        axis=0)
             unique_frame_ids = np.arange(start, end)
             unique_frames = [breakfast.read_frame(video_name, frame_id) for frame_id in unique_frame_ids]
-            video_segments = unique_frames[frame_ids - start]
+            video_segments = []
+            for frame_id in frame_ids:
+                frame_idx = int(frame_id - start)
+                video_segments.append(unique_frames[frame_idx])
             video_segments = self.transforms(video_segments).unsqueeze(0)  # 1 x B x C x T x H x W
         else:
             if n_frames < self.segment_length * self.frame_stride:
