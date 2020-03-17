@@ -5,12 +5,12 @@ import numpy as np
 
 if __name__ == '__main__':
     import sys
-    sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+    sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from scripts import set_determinstic_mode
 from data.breakfast import get_submission_segments
 from config import ROOT_DIR
-SUBMISSION_DIR = os.path.join(ROOT_DIR, 'submissions')
+SUBMISSION_DIR = os.path.join(ROOT_DIR, 'submissions', 'action-recognition')
 
 
 def _parse_args():
@@ -27,7 +27,7 @@ def main():
     args = _parse_args()
 
     if args.model == 'baselines':
-        from scripts.train_baseline import Trainer
+        from scripts.action_recognition.train_baseline import Trainer
     else:
         raise ValueError('no such model')
     submission_dir = os.path.join(SUBMISSION_DIR, args.model)

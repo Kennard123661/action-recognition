@@ -17,16 +17,16 @@ R2PLU1D_MODELS = ['r2plus1d_34_32_ig65m', 'r2plus1d_34_32_kinetics', 'r2plus1d_3
 
 if __name__ == '__main__':
     import sys
-    sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+    sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from scripts import BASE_LOG_DIR, BASE_CHECKPOINT_DIR, BASE_CONFIG_DIR
+from scripts.action_recognition import ACTION_REG_LOG_DIR, ACTION_REG_CHECKPOINT_DIR, ACTION_REG_CONFIG_DIR
 from scripts import set_determinstic_mode
 import data.breakfast as breakfast
 from utils.video_utils import ToTensorVideo, ToZeroOneVideo, ResizeVideo
 
-CHECKPOINT_DIR = os.path.join(BASE_CHECKPOINT_DIR, 'r2plus1d')
-LOG_DIR = os.path.join(BASE_LOG_DIR, 'r2plus1d')
-CONFIG_DIR = os.path.join(BASE_CONFIG_DIR, 'r2plus1d')
+CHECKPOINT_DIR = os.path.join(ACTION_REG_CHECKPOINT_DIR, 'r2plus1d')
+LOG_DIR = os.path.join(ACTION_REG_LOG_DIR, 'r2plus1d')
+CONFIG_DIR = os.path.join(ACTION_REG_CONFIG_DIR, 'r2plus1d')
 
 
 NUM_WORKERS = 2

@@ -5,41 +5,47 @@ import torch
 import math
 import torch.utils.data as tdata
 import torch.optim as optim
-import torchvision.models as models
-import torchvision.transforms as transforms
 from torch.utils.data._utils.collate import default_collate
 import numpy as np
 from tqdm import tqdm
 import tensorboardX
+import argparse
+
 
 if __name__ == '__main__':
     import sys
-    sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+    sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from scripts import BASE_LOG_DIR, BASE_CHECKPOINT_DIR, BASE_CONFIG_DIR, NUM_WORKERS
-from scripts import set_determinstic_mode, parse_args
+from scripts.action_recognition import ACTION_REG_LOG_DIR, ACTION_REG_CHECKPOINT_DIR, ACTION_REG_CONFIG_DIR
+from scripts import set_determinstic_mode
 import data.breakfast as breakfast
+from nets.action_reg import baselines
 
-CHECKPOINT_DIR = os.path.join(BASE_CHECKPOINT_DIR, 'im_models')
-LOG_DIR = os.path.join(BASE_LOG_DIR, 'im_models')
-CONFIG_DIR = os.path.join(BASE_CONFIG_DIR, 'im_models')
+CHECKPOINT_DIR = os.path.join(ACTION_REG_CHECKPOINT_DIR, 'baselines')
+LOG_DIR = os.path.join(ACTION_REG_LOG_DIR, 'baselines')
+CONFIG_DIR = os.path.join(ACTION_REG_CONFIG_DIR, 'baselines')
+
+
+# I3D_N_CHANNELS = 400
+NUM_WORKERS = 2
 
 
 class Trainer:
-    def __init__(self, experiment):
+    def __init__(self, experiment, device):
         config_file = os.path.join(CONFIG_DIR, experiment + '.json')
         assert os.path.exists(config_file), 'config file {} does not exist'.format(config_file)
         self.experiment = experiment
         with open(config_file, 'r') as f:
-            self.configs = json.load(f)
+            configs = json.load(f)
+        self.device = int(device)
+        self.i3d_length = configs['i3d-length']
 
-        self.lr = self.configs['lr']
-        self.max_epochs = self.configs['max-epochs']
-        self.train_batch_size = self.configs['train-batch-size']
-        self.test_batch_size = self.configs['test-batch-size']
-        self.n_test_segments = self.configs['n-test-segments']
+        self.lr = configs['lr']
+        self.max_epochs = configs['max-epochs']
+        self.train_batch_size = configs['train-batch-size']
+        self.test_batch_size = configs['test-batch-size']
         self.n_epochs = 0
-        self.devices = np.arange(torch.cuda.device_count())
+        self.n_test_segments = configs['n-test-segments']
 
         self.log_dir = os.path.join(LOG_DIR, experiment)
         if not os.path.exists(self.log_dir):
@@ -50,46 +56,43 @@ class Trainer:
         if not os.path.exists(self.checkpoint_dir):
             os.makedirs(self.checkpoint_dir)
 
-        model_id = self.configs['model-id']
-        if model_id == 'resnet50':
-            model = models.resnet50(pretrained=False)
-            n_features = model.fc.in_features
-            model.fc = nn.Linear(n_features, breakfast.N_CLASSES)
-            self.model = model
-            self.input_size = 224
+        model_id = configs['model-id']
+        if model_id == 'one-layer-mlp':
+            self.model = baselines.OneLayerMlp(in_channels=self.i3d_length, n_classes=breakfast.N_CLASSES,
+                                               dropout=configs['dropout'])
+        elif model_id == 'three-layer-mlp':
+            self.model = baselines.ThreeLayerMlp(in_channels=self.i3d_length, n_classes=breakfast.N_CLASSES,
+                                                 dropout=configs['dropout'], base_channels=configs['base-channels'])
         else:
             raise ValueError('no such model')
-        self._load_saved_model()
-        self.model = nn.DataParallel(self.model).cuda()
-
-        self.loss_fn = nn.CrossEntropyLoss().cuda()
-        if self.configs['optim'] == 'adam':
+        self.model = self.model.cuda(self.device)
+        self.loss_fn = nn.CrossEntropyLoss().cuda(self.device)
+        if configs['optim'] == 'adam':
             self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
-        elif self.configs['optim'] == 'sgd':
-            self.optimizer = optim.SGD(self.model.parameters(), lr=self.lr, momentum=self.configs['momentum'],
-                                       nesterov=self.configs['nesterov'], dampening=self.configs['dampening'],
-                                       weight_decay=self.configs['weight-decay'])
+        elif configs['optim'] == 'sgd':
+            self.optimizer = optim.SGD(self.model.parameters(), lr=self.lr, momentum=configs['momentum'],
+                                       nesterov=configs['nesterov'])
         else:
             raise ValueError('no such optimizer')
 
-        if self.configs['scheduler'] == 'step':
-            self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=self.configs['lr-step'],
-                                                       gamma=self.configs['lr-decay'])
-        elif self.configs['scheduler'] == 'plateau':
-            self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, 'min',
-                                                                  patience=self.configs['lr-step'])
+        if configs['scheduler'] == 'step':
+            self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=configs['lr-step'],
+                                                       gamma=configs['lr-decay'])
+        elif configs['scheduler'] == 'plateau':
+            self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode='min',
+                                                                  patience=configs['lr-step'])
         else:
             raise ValueError('no such scheduler')
-        self._load_training_checkpoint()
+        self._load_checkpoint()
 
     def train(self, train_data, test_data):
         train_segments, train_labels, train_logits = train_data
         test_segments, test_labels, test_logits = test_data
 
-        train_dataset = TrainDataset(train_segments, train_labels, train_logits, input_size=self.input_size)
+        train_dataset = TrainDataset(train_segments, train_labels, train_logits, i3d_length=self.i3d_length)
         test_dataset = TestDataset(test_segments, test_labels, test_logits, n_samples=self.n_test_segments,
-                                   input_size=self.input_size)
-        train_val_dataset = TestDataset(train_segments, train_labels, train_logits, input_size=self.input_size)
+                                   i3d_length=self.i3d_length)
+        train_val_dataset = TestDataset(train_segments, train_labels, train_logits, i3d_length=self.i3d_length)
 
         start_epoch = self.n_epochs
         for epoch in range(start_epoch, self.max_epochs):
@@ -106,7 +109,9 @@ class Trainer:
                 'test': test_acc
             }
             self.tboard_writer.add_scalars('accuracy', log_dict, self.n_epochs)
-            self.scheduler.step(epoch)
+
+            if isinstance(self.scheduler, optim.lr_scheduler.StepLR):
+                self.scheduler.step(epoch)
 
     def train_step(self, train_dataset):
         print('INFO: training at epoch {}'.format(self.n_epochs))
@@ -115,8 +120,9 @@ class Trainer:
         self.model.train()
         losses = []
         for feats, logits in tqdm(dataloader):
-            feats = feats.cuda()
-            logits = logits.cuda()
+            feats = feats.cuda(self.device)
+            logits = logits.cuda(self.device)
+            # print(feats.shape)
 
             self.optimizer.zero_grad()
             feats = self.model(feats)
@@ -128,6 +134,9 @@ class Trainer:
         print('INFO: at epoch {0} loss = {1}'.format(self.n_epochs, avg_loss))
         self.tboard_writer.add_scalar('loss', avg_loss, self.n_epochs)
 
+        if isinstance(self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):
+            self.scheduler.step(avg_loss)
+
     def test_step(self, test_dataset):
         dataloader = tdata.DataLoader(test_dataset, shuffle=False, batch_size=self.test_batch_size,
                                       collate_fn=test_dataset.collate_fn, pin_memory=True, num_workers=NUM_WORKERS)
@@ -136,11 +145,10 @@ class Trainer:
         n_predictions = 0
         with torch.no_grad():
             for feats, logits in tqdm(dataloader):
-                bs, n_segments, n_channels, h, w = feats.shape
-                feats = feats.cuda()
-                logits = logits.cuda()
+                feats = feats.cuda(self.device)
+                logits = logits.cuda(self.device)
 
-                feats = feats.view(-1, n_channels, h, w)
+                feats = feats.view(-1, self.i3d_length)
                 feats = self.model(feats)
                 feats = feats.view(-1, self.n_test_segments, breakfast.N_CLASSES)
                 feats = torch.sum(feats, dim=1)
@@ -165,20 +173,12 @@ class Trainer:
         }
         torch.save(save_dict, checkpoint_file)
 
-    def _load_saved_model(self, checkpoint_name='model'):
+    def _load_checkpoint(self, checkpoint_name='model'):
         checkpoint_file = os.path.join(self.checkpoint_dir, checkpoint_name + '.pth')
         if os.path.exists(checkpoint_file):
             print('INFO: loading checkpoint {}'.format(checkpoint_file))
             checkpoint = torch.load(checkpoint_file)
             self.model.load_state_dict(checkpoint['model'])
-        else:
-            print('INFO: checkpoint does not exist, continuing...')
-
-    def _load_training_checkpoint(self, checkpoint_name='model'):
-        checkpoint_file = os.path.join(self.checkpoint_dir, checkpoint_name + '.pth')
-        if os.path.exists(checkpoint_file):
-            print('INFO: loading checkpoint {}'.format(checkpoint_file))
-            checkpoint = torch.load(checkpoint_file)
             self.optimizer.load_state_dict(checkpoint['optim'])
             self.scheduler.load_state_dict(checkpoint['scheduler'])
             self.n_epochs = checkpoint['n-epochs']
@@ -186,16 +186,15 @@ class Trainer:
             print('INFO: checkpoint does not exist, continuing...')
 
     def predict(self, prediction_segments):
-        dataset = PredictionDataset(prediction_segments, self.n_test_segments)
+        dataset = PredictionDataset(prediction_segments, self.n_test_segments, i3d_length=self.i3d_length)
         dataloader = tdata.DataLoader(dataset, shuffle=False, batch_size=self.test_batch_size, num_workers=NUM_WORKERS,
                                       pin_memory=True)
         self.model.eval()
         all_predictions = []
         with torch.no_grad():
             for feats in tqdm(dataloader):
-                bs, n_segments, n_channels, h, w = feats.shape
-                feats = feats.cuda()
-                feats = feats.view(-1, n_channels, h, w)
+                feats = feats.cuda(self.device)
+                feats = feats.view(-1, self.i3d_length)
                 feats = self.model(feats)
                 feats = feats.view(-1, self.n_test_segments, breakfast.N_CLASSES)
                 feats = torch.sum(feats, dim=1)
@@ -206,17 +205,14 @@ class Trainer:
 
 
 class TrainDataset(tdata.Dataset):
-    def __init__(self, segments, segment_labels, segment_logits, input_size):
+    def __init__(self, segments, segment_labels, segment_logits, i3d_length):
         super(TrainDataset, self).__init__()
         self.segments = segments
         self.segment_labels = segment_labels
         self.segment_logits = segment_logits
-        self.transforms = transforms.Compose([
-            transforms.RandomResizedCrop(input_size),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            transforms.Normalize(breakfast.TENSOR_MEAN, breakfast.TENSOR_STD)
-        ])
+        self.i3d_length = int(i3d_length)
+        # print(self.i3d_length)
+        # exit()
 
     def __getitem__(self, idx):
         segment_dict = self.segments[idx]
@@ -225,48 +221,40 @@ class TrainDataset(tdata.Dataset):
         start, end = segment_dict['start'], segment_dict['end']
         assert start < end, '{0} has errors, logit {1}'.format(video_name, logit)
 
-        frame_id = np.random.choice(np.arange(start, end))
-        image = breakfast.read_frame(video_name, frame_id)
-        image = self.transforms(image)
-        return image, logit
+        i3d_feat = breakfast.read_i3d_data(video_name, window=[start, end], i3d_length=self.i3d_length)
+        assert len(i3d_feat) > 0, '{0} has length {1}, logit {2}'.format(video_name, len(i3d_feat), logit)
+        selected_idx = np.random.choice(np.arange(len(i3d_feat)))
+        selected = torch.from_numpy(i3d_feat[selected_idx])
+        return selected, logit
 
     def __len__(self):
         return len(self.segments)
 
     @staticmethod
     def collate_fn(batch):
-        images, logits = zip(*batch)
-        images = torch.stack(images)
+        feats, logits = zip(*batch)
+        feats = torch.stack(feats)
         logits = default_collate(logits)
-        return images, logits
+        return feats, logits
 
 
 class TestDataset(TrainDataset):
-    def __init__(self, segments, segment_labels, segment_logits, input_size, n_samples=25):
-        super(TestDataset, self).__init__(segments, segment_labels, segment_logits, input_size)
+    def __init__(self, segments, segment_labels, segment_logits, i3d_length, n_samples=25):
+        super(TestDataset, self).__init__(segments, segment_labels, segment_logits, i3d_length=i3d_length)
         self.n_samples = n_samples
-        self.transforms = transforms.Compose([
-            transforms.Resize(input_size),
-            transforms.CenterCrop(input_size),
-            transforms.ToTensor(),
-            transforms.Normalize(breakfast.TENSOR_MEAN, breakfast.TENSOR_STD)
-        ])
 
     def __getitem__(self, idx):
-        logit = self.segment_logits[idx]
-        segment_frames = self.load_segment(idx)
-        return segment_frames, logit
-
-    def load_segment(self, idx):
         segment = self.segments[idx]
+        logit = self.segment_logits[idx]
         video_name = segment['video-name']
         start, end = segment['start'], segment['end']
 
+        i3d_feat = breakfast.read_i3d_data(video_name, window=[start, end], i3d_length=self.i3d_length)
         sample_idxs = self._get_sample_idxs(start, end)
-        segment_frames = [breakfast.read_frame(video_name, frame_id=frame_id) for frame_id in sample_idxs]
-        segment_frames = [self.transforms(frame) for frame in segment_frames]
-        segment_frames = torch.stack(segment_frames, dim=0)
-        return segment_frames
+        # print(i3d_feat.shape, ' ', start, ' ', end, ' ', sample_idxs)
+        selected = i3d_feat[sample_idxs]
+        selected = torch.from_numpy(selected)
+        return selected, logit
 
     def _get_sample_idxs(self, start, end):
         n_frames = end - start
@@ -282,27 +270,46 @@ class TestDataset(TrainDataset):
                 if (fid / n_frames) >= (len(sample_idxs) / self.n_samples):
                     sample_idxs.append(fid)
             sample_idxs = np.array(sample_idxs)
-        sample_idxs = sample_idxs.reshape(-1) + start
+        sample_idxs = sample_idxs.reshape(-1)
         return sample_idxs
 
 
 class PredictionDataset(TestDataset):
-    def __init__(self, segments, n_samples, input_size):
+    def __init__(self, segments, n_samples, i3d_length):
         super(PredictionDataset, self).__init__(segments=segments, segment_labels=None, segment_logits=None,
-                                                n_samples=n_samples, input_size=input_size)
+                                                n_samples=n_samples, i3d_length=i3d_length)
 
     def __getitem__(self, idx):
-        selected = self.load_segment(idx)
+        segment = self.segments[idx]
+        video_name = segment['video-name']
+        start, end = segment['start'], segment['end']
+
+        i3d_feat = breakfast.read_i3d_data(video_name, window=[start, end], i3d_length=self.i3d_length)
+        sample_idxs = self._get_sample_idxs(start, end)
+        selected = i3d_feat[sample_idxs]
+        selected = torch.from_numpy(selected)
         return selected
 
 
-def get_clean_data(split):
+def _parse_args():
+    argparser = argparse.ArgumentParser()
+    argparser.add_argument('-c', '--config', required=True, type=str, help='config filename e.g -c base')
+    argparser.add_argument('-d', '--device', default=0, choices=np.arange(torch.cuda.device_count()),
+                           type=int, help='device to run on')
+    return argparser.parse_args()
+
+
+def _parse_split_data(split, feat_len):
     segments, labels, logits = breakfast.get_data(split)
     valid_segments = []
     valid_labels = []
     valid_logits = []
-    for i, segment in enumerate(segments):
-        if 48 > logits[i] > 0:  # remove walk in and walk out.
+    for i, segment in enumerate(tqdm(segments)):
+        start, end = segment['start'], segment['end']
+        i3d_feats = breakfast.read_i3d_data(segment['video-name'], window=[start, end], i3d_length=feat_len)
+        # print(np.array(i3d_feats).shape)
+        if len(i3d_feats) > 0 and 48 > logits[i] > 0:  # remove walk in and walk out.
+            segment['end'] = segment['start'] + len(i3d_feats)
             valid_segments.append(segment)
             valid_labels.append(labels[i])
             valid_logits.append(logits[i])
@@ -311,10 +318,10 @@ def get_clean_data(split):
 
 def main():
     set_determinstic_mode()
-    args = parse_args()
-    trainer = Trainer(args.config)
-    train_data = get_clean_data('train')
-    test_data = get_clean_data('test')
+    args = _parse_args()
+    trainer = Trainer(args.config, args.device)
+    train_data = _parse_split_data('train', trainer.i3d_length)
+    test_data = _parse_split_data('test', trainer.i3d_length)
     trainer.train(train_data, test_data)
 
 
