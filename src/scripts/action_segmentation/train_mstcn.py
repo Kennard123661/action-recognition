@@ -29,6 +29,9 @@ LOG_DIR = os.path.join(ACTION_SEG_LOG_DIR, 'mstcn')
 CONFIG_DIR = os.path.join(ACTION_SEG_CONFIG_DIR, 'mstcn')
 NUM_WORKERS = 2
 
+# todo change this.
+MSTCN_FEAT_DIR = './dummy/'
+
 
 class Trainer:
     def __init__(self, experiment, device):
@@ -77,7 +80,9 @@ class Trainer:
         self.model.fc = nn.Linear(self.model.fc.in_features, out_features=breakfast.N_CLASSES,
                                   bias=self.model.fc.bias is not None)
         self.model = self.model.cuda(self.device)
-        self.loss_fn = nn.CrossEntropyLoss().cuda(self.device)
+        self.ce_loss = nn.CrossEntropyLoss(ignore_index=-100).cuda(self.device)
+        self.mse_loss = nn.MSELoss(reduction='none')
+
         if configs['optim'] == 'adam':
             self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
         elif configs['optim'] == 'sgd':
@@ -142,7 +147,7 @@ class Trainer:
 
             self.optimizer.zero_grad()
             feats = self.model(feats)
-            loss = self.loss_fn(feats, logits)
+            loss = self.ce_loss(feats, logits)
             loss.backward()
             self.optimizer.step()
             losses.append(loss.item())
@@ -159,6 +164,34 @@ class Trainer:
         self.model.eval()
         n_correct = 0
         n_predictions = 0
+
+        # while batch_gen.has_next():
+        #     batch_input, batch_target, mask = batch_gen.next_batch(batch_size)
+        #     batch_input, batch_target, mask = batch_input.to(device), batch_target.to(device), mask.to(device)
+        #     optimizer.zero_grad()
+        #     predictions = self.model(batch_input, mask)
+        #
+        #     loss = 0
+        #     for p in predictions:
+        #         loss += self.ce(p.transpose(2, 1).contiguous().view(-1, self.num_classes), batch_target.view(-1))
+        #         loss += 0.15 * torch.mean(torch.clamp(
+        #             self.mse(F.log_softmax(p[:, :, 1:], dim=1), F.log_softmax(p.detach()[:, :, :-1], dim=1)), min=0,
+        #             max=16) * mask[:, :, 1:])
+        #
+        #     epoch_loss += loss.item()
+        #     loss.backward()
+        #     optimizer.step()
+        #
+        #     _, predicted = torch.max(predictions[-1].data, 1)
+        #     correct += ((predicted == batch_target).float() * mask[:, 0, :].squeeze(1)).sum().item()
+        #     total += torch.sum(mask[:, 0, :]).item()
+        #
+        # batch_gen.reset()
+        # torch.save(self.model.state_dict(), save_dir + "/epoch-" + str(epoch + 1) + ".model")
+        # torch.save(optimizer.state_dict(), save_dir + "/epoch-" + str(epoch + 1) + ".opt")
+        # print("[epoch %d]: epoch loss = %f,   acc = %f" % (epoch + 1, epoch_loss / len(batch_gen.list_of_examples),
+        #                                                    float(correct) / total))
+
         with torch.no_grad():
             for feats, n_segments, idxs in tqdm(dataloader):
                 feats = feats.cuda(self.device)  # BN x C x T x H x W
@@ -228,33 +261,32 @@ class Trainer:
 
 
 class TrainDataset(tdata.Dataset):
-    def __init__(self, segments, segment_labels, segment_logits, segment_length, input_size, frame_stride=1):
+    def __init__(self, videos, labels, logits, n_classes, sample_rate):
         super(TrainDataset, self).__init__()
-        self.segments = segments
-        self.segment_labels = segment_labels
-        self.segment_logits = segment_logits
-        self.segment_length = int(segment_length)
-        self.input_size = int(input_size)
-        self.frame_stride = int(frame_stride)
+        self.videos = videos
+        self.labels = labels
+        self.logits = logits
+        self.n_classes = int(n_classes)
+        self.sample_rate = int(sample_rate)
 
-        self.transforms = Compose([
-            ToTensorVideo(),
-            ResizeVideo(input_size),
-            transforms.RandomResizedCropVideo(size=input_size),
-            transforms.RandomHorizontalFlipVideo(),
-            ToZeroOneVideo(),
-            transforms.NormalizeVideo(breakfast.TENSOR_MEAN, breakfast.TENSOR_STD)
-        ])
+    def __len__(self):
+        return len(self.videos)
+
+    @staticmethod
+    def _read_video_features(video_name):
+        video_feat_file = os.path.join(MSTCN_FEAT_DIR, video_name + '.npy')
+        features = np.load(video_feat_file).astype(np.float32)
+
 
     def __getitem__(self, idx):
-        segment_dict = self.segments[idx]
-        logit = self.segment_logits[idx]
+        segment_dict = self.videos[idx]
+        logit = self.logits[idx]
         video_name = segment_dict['video-name']
         start, end = segment_dict['start'], segment_dict['end']
         assert start < end, '{0} has errors, logit {1}'.format(video_name, logit)
 
         n_frames = end - start
-        if n_frames < self.segment_length:
+        if n_frames < self.segment:
             frame_ids = np.arange(start, end).tolist()
             n_repeats = self.segment_length // n_frames
             n_excess = self.segment_length - n_frames * n_repeats
@@ -282,9 +314,6 @@ class TrainDataset(tdata.Dataset):
             frames = [breakfast.read_frame(video_name, frame_id) for frame_id in frame_ids]
         frames = self.transforms(frames)
         return frames, logit
-
-    def __len__(self):
-        return len(self.segments)
 
     @staticmethod
     def collate_fn(batch):
