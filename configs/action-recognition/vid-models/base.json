@@ -1,6 +1,6 @@
 {
-  "test-batch-size": 16,
-  "train-batch-size": 64,
+  "test-batch-size": 8,
+  "train-batch-size": 50,
   "model-id": "r3d",
   "dropout": 0,
 

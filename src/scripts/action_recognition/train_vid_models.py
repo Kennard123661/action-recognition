@@ -91,7 +91,6 @@ class Trainer:
         else:
             raise ValueError('no such scheduler')
         self._load_checkpoint()
-        self.input_size = configs['input-size']
         self.frame_stride = configs['frame-stride']
 
     def train(self, train_data, test_data):
@@ -107,10 +106,10 @@ class Trainer:
         start_epoch = self.n_epochs
         for epoch in range(start_epoch, self.max_epochs):
             self.n_epochs += 1
-            train_acc = self.test_step(train_val_dataset)
             self.train_step(train_dataset)
             self._save_checkpoint('model-{}'.format(self.n_epochs))
             self._save_checkpoint()  # update the latest model
+            train_acc = self.test_step(train_val_dataset)
             test_acc = self.test_step(test_dataset)
             print('INFO: at epoch {}, the train accuracy is {} and the test accuracy is {}'.format(self.n_epochs,
                                                                                                    train_acc, test_acc))
@@ -126,7 +125,7 @@ class Trainer:
     def train_step(self, train_dataset):
         print('INFO: training at epoch {}'.format(self.n_epochs))
         dataloader = tdata.DataLoader(train_dataset, shuffle=True, batch_size=self.train_batch_size, drop_last=True,
-                                      collate_fn=train_dataset.collate_fn, pin_memory=True, num_workers=NUM_WORKERS)
+                                      collate_fn=train_dataset.collate_fn, pin_memory=False, num_workers=NUM_WORKERS)
         self.model.train()
         losses = []
         for feats, logits in tqdm(dataloader):
