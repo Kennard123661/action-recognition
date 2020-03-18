@@ -1,6 +1,29 @@
 # Action Recognition
 
 ## Setting Up
+The directories for our codebase is setup as follows:
+```bash
+[CS5242-PROJECT-DIR]
+    - [CS5242-PROJECT-CODE] # this repository
+    - datasets
+        - breakfast
+            - mstcn  # download from mstcn repository
+                - groundTruth
+                - splits
+                - features
+            - i3d  # provided i3d features
+            - i3d-2048  # i3d features from breakfast dataset 
+            - labels  # labels from breakfast dataset
+            - videos  # videos from breakfast dataset
+            - segment.txt  # download from kaggle
+            - provided-gt  # download from kaggle database
+            - splits # download from kaggle dataset
+        - activitynet
+        - ...
+    - submissions       
+```
+Then, edit the root directory inside of `[CS5242-PROJECT-CODE]/src/config.py`, to link to `[CS5242-PROJECT-DIR]`. You 
+may place `[CS5242-PROJECT-CODE]` in a separate directory.
 
 For the main code, please run the following:
 
@@ -20,7 +43,6 @@ sudo apt install ubuntu-restricted-extras
 conda install -c conda-forge ffmpeg
 ```
 
-### Datasets
 
 #### Kinetics
 To download kinetics dataset, create `{DATA_DIR}/kinetics/splits` and place the downloaded `.json` and `.csv` 
