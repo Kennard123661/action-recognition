@@ -23,9 +23,10 @@ I3D_2048_DIR = os.path.join(DATASET_DIR, 'i3d-2048')
 MAPPING_FILE = os.path.join(SPLIT_DIR, 'mapping.txt')
 
 PROVIDED_GT_DIR = os.path.join(DATASET_DIR, 'provided-gt')
-MSTCN_DATA_DIR = os.path.join(DATASET_DIR, 'mstcn')
-MSTCN_LABEL_DIR = os.path.join(MSTCN_DATA_DIR, 'groundTruth')
-MSTCN_FEATURE_DIR = os.path.join(MSTCN_DATA_DIR, 'features')
+MSTCN_DIR = os.path.join(DATASET_DIR, 'mstcn')
+MSTCN_LABEL_DIR = os.path.join(MSTCN_DIR, 'groundTruth')
+MSTCN_SEGMENT_LABEL_DIR = os.path.join(MSTCN_DIR, 'segment-labels')
+MSTCN_FEATURE_DIR = os.path.join(MSTCN_DIR, 'features')
 
 SUBMISSION_LABEL_FILE = os.path.join(DATASET_DIR, 'test_segment.txt')
 MEAN_FILE = os.path.join(DATASET_DIR, 'mean.npy')
@@ -245,6 +246,35 @@ def _read_mstcn_label(video_name):
     return labels
 
 
+def _generate_mstcn_segment_labels():
+    """ note that 0-based indexing is used. """
+    if not os.path.exists(MSTCN_SEGMENT_LABEL_DIR):
+        os.makedirs(MSTCN_SEGMENT_LABEL_DIR)
+    for split in ['test', 'train']:
+        video_names = get_split_videonames(split)
+        all_frame_labels = [_read_mstcn_label(video_name) for video_name in video_names]
+        for i, video_name in enumerate(video_names):
+            video_frame_labels = all_frame_labels[i]
+
+            segment_labels = []
+            start = 0
+            for fi in range(len(video_frame_labels)):
+                if fi == 0:
+                    continue
+
+                prev_frame_label = video_frame_labels[fi - 1]
+                curr_frame_label = video_frame_labels[fi]
+                if prev_frame_label != curr_frame_label:
+                    segment_label = '{0} {1} {2}'.format(str(start), str(fi), prev_frame_label)
+                    start = fi
+                    segment_labels.append(segment_label)
+            segment_labels = '\n'.join(segment_labels) + '\n'
+
+            segment_label_file = os.path.join(MSTCN_SEGMENT_LABEL_DIR, video_name + '.txt')
+            with open(segment_label_file, 'w') as f:
+                f.write(segment_labels)
+
+
 def get_mstcn_data(split):
     assert split in ['train', 'test']
     video_names = get_split_videonames(split)
@@ -262,7 +292,8 @@ def get_mstcn_data(split):
 
 if __name__ == '__main__':
     # _check_mstcn_gt()
-    get_mstcn_data(split='train')
+    # get_mstcn_data(split='train')
+    _generate_mstcn_segment_labels()
     # segments = get_submission_segments()
     # print(len(segments))
     # cvt_i3d_to_numpy()

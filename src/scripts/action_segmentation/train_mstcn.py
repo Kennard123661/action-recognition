@@ -236,8 +236,37 @@ class TestDataset(TrainDataset):
     pass
 
 
-class PredictionDataset(TestDataset):
-    pass
+class PredictionDataset(tdata.Dataset):
+    def __init__(self, feat_files):
+        super(PredictionDataset, self).__init__()
+        self.video_feat_files = feat_files
+        self.n_classes = breakfast.N_MSTCN_CLASSES
+
+    def __len__(self):
+        return len(self.video_feat_files)
+
+    def __getitem__(self, idx):
+        video_feat_file = self.video_feat_files[idx]
+        features = np.load(video_feat_file)
+        features = features[:, ::SAMPLE_RATE]
+        features = torch.from_numpy(features)
+        return features
+
+    @staticmethod
+    def collate_fn(batch):
+        features = batch
+        max_video_length = 0
+        for feature in features:
+            max_video_length = max(feature.shape[1], max_video_length)
+
+        padded_features = torch.zeros(len(features), IN_CHANNELS, max_video_length, dtype=torch.float)
+        masks = torch.zeros(len(features), breakfast.N_MSTCN_CLASSES, max_video_length, dtype=torch.float)
+
+        for i, feature in enumerate(features):
+            video_len = feature.shape[1]
+            padded_features[i, :, :video_len] = feature
+            masks[i, :, :video_len] = torch.ones(breakfast.N_MSTCN_CLASSES, video_len)
+        return padded_features, masks
 
 
 def _parse_args():
