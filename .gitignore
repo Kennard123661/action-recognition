@@ -1,4 +1,3 @@
 checkpoints/*
 logs/*
 configs/*
-!**/base.json

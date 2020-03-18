@@ -8,7 +8,7 @@ if __name__ == '__main__':
     sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from scripts import set_determinstic_mode
-from data.breakfast import get_submission_segments
+from data.breakfast import get_submission_segments, SUBMISSION_GT_FILE, read_mapping_file
 from config import ROOT_DIR
 SUBMISSION_DIR = os.path.join(ROOT_DIR, 'submissions', 'action-recognition')
 

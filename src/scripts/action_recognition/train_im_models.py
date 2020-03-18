@@ -21,9 +21,9 @@ from scripts.action_recognition import ACTION_REG_LOG_DIR, ACTION_REG_CONFIG_DIR
 from scripts import set_determinstic_mode, parse_args
 import data.breakfast as breakfast
 
-CHECKPOINT_DIR = os.path.join(ACTION_REG_CHECKPOINT_DIR, 'im_models')
-LOG_DIR = os.path.join(ACTION_REG_LOG_DIR, 'im_models')
-CONFIG_DIR = os.path.join(ACTION_REG_CONFIG_DIR, 'im_models')
+CHECKPOINT_DIR = os.path.join(ACTION_REG_CHECKPOINT_DIR, 'im-models')
+LOG_DIR = os.path.join(ACTION_REG_LOG_DIR, 'im-models')
+CONFIG_DIR = os.path.join(ACTION_REG_CONFIG_DIR, 'im-models')
 
 
 class Trainer:
