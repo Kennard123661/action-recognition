@@ -189,6 +189,24 @@ class Trainer:
         else:
             print('INFO: checkpoint does not exist, continuing...')
 
+    def predict(self, submission_feats):
+        dataset = PredictionDataset(submission_feats)
+        dataloader = tdata.DataLoader(dataset, shuffle=False, batch_size=self.test_batch_size,
+                                      collate_fn=dataset.collate_fn, pin_memory=False, num_workers=NUM_WORKERS)
+
+        submission_predictions = []
+        for feats, masks in tqdm(dataloader):
+            feats = feats.cuda(self.device)
+            masks = masks.cuda(self.device)
+            self.optimizer.zero_grad()
+            predictions = self.model(feats, masks)
+            predictions = torch.argmax(predictions[-1], dim=1)
+            for i, prediction in enumerate(predictions):
+                prediction_len = torch.sum(masks[i, 0, :]).item()
+                prediction = prediction[prediction_len].detach().numpy().tolist()
+                submission_predictions.append(prediction)
+        return submission_predictions
+
 
 class TrainDataset(tdata.Dataset):
     def __init__(self, feat_files, labels, logits):
