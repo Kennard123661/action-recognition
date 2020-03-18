@@ -230,8 +230,8 @@ class TrainDataset(tdata.Dataset):
         self.transforms = Compose([
             ToTensorVideo(),
             ResizeVideo(INPUT_SIZE),
-            transforms.RandomResizedCropVideo(size=INPUT_SIZE),
-            transforms.RandomHorizontalFlipVideo(),
+            transforms.CenterCropVideo(crop_size=INPUT_SIZE),
+            # transforms.RandomHorizontalFlipVideo(),
             ToZeroOneVideo(),
             transforms.NormalizeVideo(NORM_MEAN, NORM_STD)
         ])
