@@ -24,7 +24,6 @@ from scripts.action_segmentation import ACTION_SEG_CONFIG_DIR, ACTION_SEG_CHECKP
 from scripts import set_determinstic_mode
 from nets.action_seg import mstcn
 import data.breakfast as breakfast
-from utils.video_utils import ToTensorVideo, ToZeroOneVideo, ResizeVideo
 
 CHECKPOINT_DIR = os.path.join(ACTION_SEG_CHECKPOINT_DIR, 'mstcn')
 LOG_DIR = os.path.join(ACTION_SEG_LOG_DIR, 'mstcn')
@@ -54,7 +53,6 @@ class Trainer:
         self.train_batch_size = configs['train-batch-size']
         self.test_batch_size = configs['test-batch-size']
         self.n_epochs = 0
-        self.n_test_segments = configs['n-test-segments']
 
         self.log_dir = os.path.join(LOG_DIR, experiment)
         if not os.path.exists(self.log_dir):
@@ -119,19 +117,22 @@ class Trainer:
     def train_step(self, train_dataset):
         print('INFO: training at epoch {}'.format(self.n_epochs))
         dataloader = tdata.DataLoader(train_dataset, shuffle=True, batch_size=self.train_batch_size, drop_last=True,
-                                      collate_fn=train_dataset.collate_fn, pin_memory=True, num_workers=NUM_WORKERS)
+                                      collate_fn=train_dataset.collate_fn, pin_memory=False, num_workers=NUM_WORKERS)
         self.model.train()
         losses = []
         for feats, logits, masks in tqdm(dataloader):
             feats = feats.cuda(self.device)
             logits = logits.cuda(self.device)
-            masks = logits.cuda(self.device)
+            masks = masks.cuda(self.device)
+            self.model.zero_grad()
 
-            self.optimizer.zero_grad()
             predictions = self.model(feats, masks)
-            loss = torch.zeros(1)
+            loss = None
             for p in predictions:
-                loss += self.ce_loss(p.transpose(2, 1).contiguous().view(-1, breakfast.N_MSTCN_CLASSES), logits.view(-1))
+                if loss is None:
+                    loss = self.ce_loss(p.transpose(2, 1).contiguous().view(-1, breakfast.N_MSTCN_CLASSES), logits.view(-1))
+                else:
+                    loss += self.ce_loss(p.transpose(2, 1).contiguous().view(-1, breakfast.N_MSTCN_CLASSES), logits.view(-1))
                 loss += 0.15 * torch.mean(torch.clamp(
                     self.mse_loss(F.log_softmax(p[:, :, 1:], dim=1),
                                   F.log_softmax(p.detach()[:, :, :-1], dim=1)), min=0, max=16) * masks[:, :, 1:])
@@ -147,7 +148,7 @@ class Trainer:
 
     def test_step(self, test_dataset):
         dataloader = tdata.DataLoader(test_dataset, shuffle=False, batch_size=self.test_batch_size,
-                                      collate_fn=test_dataset.collate_fn, pin_memory=True, num_workers=NUM_WORKERS)
+                                      collate_fn=test_dataset.collate_fn, pin_memory=False, num_workers=NUM_WORKERS)
         self.model.eval()
         n_correct = 0
         n_predictions = 0
@@ -155,11 +156,10 @@ class Trainer:
             for feats, logits, masks in tqdm(dataloader):
                 feats = feats.cuda(self.device)
                 logits = logits.cuda(self.device)
-                masks = logits.cuda(self.device)
-
+                masks = masks.cuda(self.device)
                 self.optimizer.zero_grad()
                 predictions = self.model(feats, masks)
-                predictions = torch.argmax(predictions, dim=1)
+                predictions = torch.argmax(predictions[-1], dim=1)
                 n_correct += ((predictions == logits).float() * masks[:, 0, :]).sum().item()
                 n_predictions += torch.sum(masks[:, 0, :]).item()
         accuracy = n_correct / n_predictions
@@ -189,24 +189,6 @@ class Trainer:
         else:
             print('INFO: checkpoint does not exist, continuing...')
 
-    def predict(self, prediction_segments):
-        dataset = PredictionDataset(prediction_segments, self.n_test_segments, i3d_length=self.i3d_length)
-        dataloader = tdata.DataLoader(dataset, shuffle=False, batch_size=self.test_batch_size, num_workers=NUM_WORKERS,
-                                      pin_memory=True)
-        self.model.eval()
-        all_predictions = []
-        with torch.no_grad():
-            for feats in tqdm(dataloader):
-                feats = feats.cuda(self.device)
-                feats = feats.view(-1, self.i3d_length)
-                feats = self.model(feats)
-                feats = feats.view(-1, self.n_test_segments, breakfast.N_CLASSES)
-                feats = torch.sum(feats, dim=1)
-                predictions = torch.argmax(feats, dim=1)
-                predictions = predictions.detach().cpu().tolist()
-                all_predictions.extend(predictions)
-        return all_predictions
-
 
 class TrainDataset(tdata.Dataset):
     def __init__(self, feat_files, labels, logits):
@@ -225,7 +207,7 @@ class TrainDataset(tdata.Dataset):
         logits = self.logits[idx]
         assert features.shape[1] == len(logits)
         features = features[:, ::SAMPLE_RATE]
-        logits = np.array(logits)[:, ::SAMPLE_RATE]
+        logits = np.array(logits)[::SAMPLE_RATE]
 
         features = torch.from_numpy(features)
         logits = torch.from_numpy(logits)
@@ -240,14 +222,14 @@ class TrainDataset(tdata.Dataset):
 
         padded_features = torch.zeros(len(features), IN_CHANNELS, max_video_length, dtype=torch.float)
         padded_logits = torch.zeros(len(features), max_video_length, dtype=torch.long) * -100
-        mask = torch.zeros(len(features), breakfast.N_MSTCN_CLASSES, max_video_length, dtype=torch.float)
+        masks = torch.zeros(len(features), breakfast.N_MSTCN_CLASSES, max_video_length, dtype=torch.float)
 
         for i, feature in enumerate(features):
             video_len = feature.shape[1]
             padded_features[i, :, :video_len] = feature
             padded_logits[i, :video_len] = logits[i]
-            mask[i, :, :video_len] = torch.ones(breakfast.N_MSTCN_CLASSES, video_len)
-        return padded_features, padded_logits, mask
+            masks[i, :, :video_len] = torch.ones(breakfast.N_MSTCN_CLASSES, video_len)
+        return padded_features, padded_logits, masks
 
 
 class TestDataset(TrainDataset):
