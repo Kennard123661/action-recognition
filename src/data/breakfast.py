@@ -22,10 +22,16 @@ I3D_DIR = os.path.join(DATASET_DIR, 'i3d')
 I3D_2048_DIR = os.path.join(DATASET_DIR, 'i3d-2048')
 MAPPING_FILE = os.path.join(SPLIT_DIR, 'mapping.txt')
 
+PROVIDED_GT_DIR = os.path.join(DATASET_DIR, 'provided-gt')
+MSTCN_DATA_DIR = os.path.join(DATASET_DIR, 'mstcn')
+MSTCN_LABEL_DIR = os.path.join(MSTCN_DATA_DIR, 'groundTruth')
+MSTCN_FEATURE_DIR = os.path.join(MSTCN_DATA_DIR, 'features')
+
 SUBMISSION_LABEL_FILE = os.path.join(DATASET_DIR, 'test_segment.txt')
 MEAN_FILE = os.path.join(DATASET_DIR, 'mean.npy')
 STD_FILE = os.path.join(DATASET_DIR, 'std.npy')
 N_CLASSES = 48
+N_MSTCN_CLASSES = 48
 
 TENSOR_MEAN = [0.42384474, 0.39556269, 0.34748514]
 TENSOR_STD = [0.15591848, 0.14713841, 0.13312177]
@@ -209,7 +215,54 @@ def get_submission_segments():
     return segments
 
 
+def _check_mstcn_gt():
+    label_filenames = sorted(os.listdir(PROVIDED_GT_DIR))
+    video_names = [filename.split('.')[0] for filename in label_filenames]
+    print('INFO: checking mstcn groundtruth...')
+    for i in range(len(video_names)):
+        provided_gt_file = os.path.join(PROVIDED_GT_DIR, video_names[i] + '.txt')
+        if not os.path.exists(provided_gt_file):
+            continue
+        with open(provided_gt_file, 'r') as f:
+            provided_gt = f.readlines()
+        provided_gt = [label.strip() for label in provided_gt]
+
+        mstcn_label_file = os.path.join(MSTCN_LABEL_DIR, video_names[i] + '.txt')
+        with open(mstcn_label_file, 'r') as f:
+            predicted_labels = f.readlines()
+        predicted_labels = [label.strip() for label in predicted_labels]
+
+        for j, label in enumerate(provided_gt):
+            other_label = predicted_labels[j]
+            assert label == other_label
+
+
+def _read_mstcn_label(video_name):
+    label_file = os.path.join(MSTCN_LABEL_DIR, video_name + '.txt')
+    with open(label_file, 'r') as f:
+        labels = f.readlines()
+    labels = [label.strip() for label in labels]
+    return labels
+
+
+def get_mstcn_data(split):
+    assert split in ['train', 'test']
+    video_names = get_split_videonames(split)
+    video_files = [os.path.join(MSTCN_FEATURE_DIR, video_name + '.npy') for video_name in video_names]
+    gt_labels = [_read_mstcn_label(video_name) for video_name in video_names]
+
+    gt_logits = []
+    label_to_logit_map = _read_mapping_file()
+    for gt_label in gt_labels:
+        gt_logit = [label_to_logit_map[label] for label in gt_label]
+        gt_logits.append(gt_logit)
+    assert len(gt_logits) == len(gt_labels) == len(video_files)
+    return video_files, gt_labels, gt_logits
+
+
 if __name__ == '__main__':
+    # _check_mstcn_gt()
+    get_mstcn_data(split='train')
     # segments = get_submission_segments()
     # print(len(segments))
     # cvt_i3d_to_numpy()

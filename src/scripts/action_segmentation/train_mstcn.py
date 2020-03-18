@@ -12,6 +12,7 @@ import torchvision.transforms._transforms_video as transforms
 from tqdm import tqdm
 import tensorboardX
 import argparse
+import torch.nn.functional as F
 
 R2PLU1D_MODELS = ['r2plus1d_34_32_ig65m', 'r2plus1d_34_32_kinetics', 'r2plus1d_34_8_ig65m', 'r2plus1d_34_8_kinetics']
 
@@ -21,6 +22,7 @@ if __name__ == '__main__':
 
 from scripts.action_segmentation import ACTION_SEG_CONFIG_DIR, ACTION_SEG_CHECKPOINT_DIR, ACTION_SEG_LOG_DIR
 from scripts import set_determinstic_mode
+from nets.action_seg import mstcn
 import data.breakfast as breakfast
 from utils.video_utils import ToTensorVideo, ToZeroOneVideo, ResizeVideo
 
@@ -29,8 +31,13 @@ LOG_DIR = os.path.join(ACTION_SEG_LOG_DIR, 'mstcn')
 CONFIG_DIR = os.path.join(ACTION_SEG_CONFIG_DIR, 'mstcn')
 NUM_WORKERS = 2
 
+N_STAGES = 4
+N_LAYERS = 10
+N_FEATURE_MAPS = 64
+IN_CHANNELS = 2048
+
 # todo change this.
-MSTCN_FEAT_DIR = './dummy/'
+SAMPLE_RATE = 1
 
 
 class Trainer:
@@ -58,30 +65,11 @@ class Trainer:
         if not os.path.exists(self.checkpoint_dir):
             os.makedirs(self.checkpoint_dir)
 
-        model_id = configs['model-id']
-        assert model_id in R2PLU1D_MODELS, 'model must be one of {}'.format(R2PLU1D_MODELS)
-        self.segment_length = int(model_id.split('_')[2])
-        pretrained_ds = model_id.split('_')[-1]
-        if pretrained_ds == 'kinetics':
-            n_pretrained_classes = 400
-        elif pretrained_ds == 'ig65m':
-            if self.segment_length == 32:
-                n_pretrained_classes = 359
-            elif self.segment_length == 8:
-                n_pretrained_classes = 487
-            else:
-                raise ValueError('no such segment length')
-        else:
-            raise ValueError('no such model id')
-
-        self.model = torch.hub.load("moabitcoin/ig65m-pytorch", model_id, num_classes=n_pretrained_classes,
-                                    pretrained=True)
-        # replace the last layer.
-        self.model.fc = nn.Linear(self.model.fc.in_features, out_features=breakfast.N_CLASSES,
-                                  bias=self.model.fc.bias is not None)
+        self.model = mstcn.MultiStageModel(num_stages=N_STAGES, num_layers=N_LAYERS, num_f_maps=N_FEATURE_MAPS,
+                                           dim=IN_CHANNELS, num_classes=breakfast.N_MSTCN_CLASSES)
         self.model = self.model.cuda(self.device)
         self.ce_loss = nn.CrossEntropyLoss(ignore_index=-100).cuda(self.device)
-        self.mse_loss = nn.MSELoss(reduction='none')
+        self.mse_loss = nn.MSELoss(reduction='none').cuda(self.device)
 
         if configs['optim'] == 'adam':
             self.optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
@@ -100,29 +88,22 @@ class Trainer:
         else:
             raise ValueError('no such scheduler')
         self._load_checkpoint()
-        self.input_size = configs['input-size']
-        self.frame_stride = configs['frame-stride']
 
     def train(self, train_data, test_data):
         train_segments, train_labels, train_logits = train_data
         test_segments, test_labels, test_logits = test_data
 
-        train_dataset = TrainDataset(train_segments, train_labels, train_logits, segment_length=self.segment_length,
-                                     input_size=self.input_size, frame_stride=self.frame_stride)
-        test_dataset = TestDataset(test_segments, test_labels, test_logits, segment_length=self.segment_length,
-                                   input_size=self.input_size, frame_stride=self.frame_stride,
-                                   n_test_segments=self.n_test_segments)
-        train_val_dataset = TestDataset(train_segments, train_labels, train_logits, segment_length=self.segment_length,
-                                        input_size=self.input_size, frame_stride=self.frame_stride,
-                                        n_test_segments=self.n_test_segments)
+        train_dataset = TrainDataset(train_segments, train_labels, train_logits)
+        test_dataset = TestDataset(test_segments, test_labels, test_logits)
+        train_val_dataset = TestDataset(train_segments, train_labels, train_logits)
 
         start_epoch = self.n_epochs
         for epoch in range(start_epoch, self.max_epochs):
             self.n_epochs += 1
-            train_acc = self.test_step(train_val_dataset)
             self.train_step(train_dataset)
             self._save_checkpoint('model-{}'.format(self.n_epochs))
             self._save_checkpoint()  # update the latest model
+            train_acc = self.test_step(train_val_dataset)
             test_acc = self.test_step(test_dataset)
             print('INFO: at epoch {}, the train accuracy is {} and the test accuracy is {}'.format(self.n_epochs,
                                                                                                    train_acc, test_acc))
@@ -141,13 +122,19 @@ class Trainer:
                                       collate_fn=train_dataset.collate_fn, pin_memory=True, num_workers=NUM_WORKERS)
         self.model.train()
         losses = []
-        for feats, logits in tqdm(dataloader):
+        for feats, logits, masks in tqdm(dataloader):
             feats = feats.cuda(self.device)
             logits = logits.cuda(self.device)
+            masks = logits.cuda(self.device)
 
             self.optimizer.zero_grad()
-            feats = self.model(feats)
-            loss = self.ce_loss(feats, logits)
+            predictions = self.model(feats, masks)
+            loss = torch.zeros(1)
+            for p in predictions:
+                loss += self.ce_loss(p.transpose(2, 1).contiguous().view(-1, breakfast.N_MSTCN_CLASSES), logits.view(-1))
+                loss += 0.15 * torch.mean(torch.clamp(
+                    self.mse_loss(F.log_softmax(p[:, :, 1:], dim=1),
+                                  F.log_softmax(p.detach()[:, :, :-1], dim=1)), min=0, max=16) * masks[:, :, 1:])
             loss.backward()
             self.optimizer.step()
             losses.append(loss.item())
@@ -164,57 +151,18 @@ class Trainer:
         self.model.eval()
         n_correct = 0
         n_predictions = 0
-
-        # while batch_gen.has_next():
-        #     batch_input, batch_target, mask = batch_gen.next_batch(batch_size)
-        #     batch_input, batch_target, mask = batch_input.to(device), batch_target.to(device), mask.to(device)
-        #     optimizer.zero_grad()
-        #     predictions = self.model(batch_input, mask)
-        #
-        #     loss = 0
-        #     for p in predictions:
-        #         loss += self.ce(p.transpose(2, 1).contiguous().view(-1, self.num_classes), batch_target.view(-1))
-        #         loss += 0.15 * torch.mean(torch.clamp(
-        #             self.mse(F.log_softmax(p[:, :, 1:], dim=1), F.log_softmax(p.detach()[:, :, :-1], dim=1)), min=0,
-        #             max=16) * mask[:, :, 1:])
-        #
-        #     epoch_loss += loss.item()
-        #     loss.backward()
-        #     optimizer.step()
-        #
-        #     _, predicted = torch.max(predictions[-1].data, 1)
-        #     correct += ((predicted == batch_target).float() * mask[:, 0, :].squeeze(1)).sum().item()
-        #     total += torch.sum(mask[:, 0, :]).item()
-        #
-        # batch_gen.reset()
-        # torch.save(self.model.state_dict(), save_dir + "/epoch-" + str(epoch + 1) + ".model")
-        # torch.save(optimizer.state_dict(), save_dir + "/epoch-" + str(epoch + 1) + ".opt")
-        # print("[epoch %d]: epoch loss = %f,   acc = %f" % (epoch + 1, epoch_loss / len(batch_gen.list_of_examples),
-        #                                                    float(correct) / total))
-
         with torch.no_grad():
-            for feats, n_segments, idxs in tqdm(dataloader):
-                feats = feats.cuda(self.device)  # BN x C x T x H x W
-                idxs = idxs.detach().cpu().tolist()
-                logits = np.array(test_dataset.segment_logits)[idxs]
+            for feats, logits, masks in tqdm(dataloader):
+                feats = feats.cuda(self.device)
+                logits = logits.cuda(self.device)
+                masks = logits.cuda(self.device)
 
-                feats = self.model(feats)  # BN x n_classes
-                predictions = []
-                start = 0
-                for n_segment in n_segments:
-                    end = start + n_segment
-                    prediction = torch.sum(feats[start:end], dim=0)  # sum over the segments
-                    predictions.append(prediction)
-                    start = end
-                predictions = torch.stack(predictions, dim=0)
+                self.optimizer.zero_grad()
+                predictions = self.model(feats, masks)
                 predictions = torch.argmax(predictions, dim=1)
-                logits = torch.from_numpy(logits)
-
-                for i, prediction in enumerate(predictions):
-                    if prediction == logits[i]:
-                        n_correct += 1
-                n_predictions += predictions.shape[0]
-            accuracy = n_correct / n_predictions
+                n_correct += ((predictions == logits).float() * masks[:, 0, :]).sum().item()
+                n_predictions += torch.sum(masks[:, 0, :]).item()
+        accuracy = n_correct / n_predictions
         return accuracy
 
     def _save_checkpoint(self, checkpoint_name='model'):
@@ -261,146 +209,49 @@ class Trainer:
 
 
 class TrainDataset(tdata.Dataset):
-    def __init__(self, videos, labels, logits, n_classes, sample_rate):
+    def __init__(self, feat_files, labels, logits):
         super(TrainDataset, self).__init__()
-        self.videos = videos
+        self.video_feat_files = feat_files
         self.labels = labels
         self.logits = logits
-        self.n_classes = int(n_classes)
-        self.sample_rate = int(sample_rate)
+        self.n_classes = breakfast.N_MSTCN_CLASSES
 
     def __len__(self):
-        return len(self.videos)
-
-    @staticmethod
-    def _read_video_features(video_name):
-        video_feat_file = os.path.join(MSTCN_FEAT_DIR, video_name + '.npy')
-        features = np.load(video_feat_file).astype(np.float32)
-
+        return len(self.video_feat_files)
 
     def __getitem__(self, idx):
-        segment_dict = self.videos[idx]
-        logit = self.logits[idx]
-        video_name = segment_dict['video-name']
-        start, end = segment_dict['start'], segment_dict['end']
-        assert start < end, '{0} has errors, logit {1}'.format(video_name, logit)
+        video_feat_file = self.video_feat_files[idx]
+        features = np.load(video_feat_file)
+        logits = self.logits[idx]
+        assert features.shape[1] == len(logits)
+        features = features[:, ::SAMPLE_RATE]
+        logits = np.array(logits)[:, ::SAMPLE_RATE]
 
-        n_frames = end - start
-        if n_frames < self.segment:
-            frame_ids = np.arange(start, end).tolist()
-            n_repeats = self.segment_length // n_frames
-            n_excess = self.segment_length - n_frames * n_repeats
-
-            frame_ids = np.concatenate([np.repeat(frame_ids[:n_excess], n_repeats+1),
-                                        np.repeat(frame_ids[n_excess:], n_repeats)],
-                                       axis=0)
-            unique_frame_ids = np.arange(start, end)
-            unique_frames = [breakfast.read_frame(video_name, frame_id) for frame_id in unique_frame_ids]
-            frames = []
-            for frame_id in frame_ids:
-                frame_idx = int(frame_id - start)
-                frames.append(unique_frames[frame_idx])
-        else:
-            if n_frames < self.segment_length * self.frame_stride:
-                max_stride = n_frames // self.segment_length
-            else:
-                max_stride = self.frame_stride
-            max_start = n_frames - max_stride * self.segment_length
-            if max_start <= start:
-                start_frame = start
-            else:
-                start_frame = np.random.choice(np.arange(start, max_start))
-            frame_ids = np.arange(start_frame, end, max_stride)[:self.segment_length]
-            frames = [breakfast.read_frame(video_name, frame_id) for frame_id in frame_ids]
-        frames = self.transforms(frames)
-        return frames, logit
+        features = torch.from_numpy(features)
+        logits = torch.from_numpy(logits)
+        return features, logits
 
     @staticmethod
     def collate_fn(batch):
-        feats, logits = zip(*batch)
-        feats = default_collate(feats)
-        logits = default_collate(logits)
-        return feats, logits
+        features, logits = zip(*batch)
+        max_video_length = 0
+        for feature in features:
+            max_video_length = max(feature.shape[1], max_video_length)
+
+        padded_features = torch.zeros(len(features), IN_CHANNELS, max_video_length, dtype=torch.float)
+        padded_logits = torch.zeros(len(features), max_video_length, dtype=torch.long) * -100
+        mask = torch.zeros(len(features), breakfast.N_MSTCN_CLASSES, max_video_length, dtype=torch.float)
+
+        for i, feature in enumerate(features):
+            video_len = feature.shape[1]
+            padded_features[i, :, :video_len] = feature
+            padded_logits[i, :video_len] = logits[i]
+            mask[i, :, :video_len] = torch.ones(breakfast.N_MSTCN_CLASSES, video_len)
+        return padded_features, padded_logits, mask
 
 
 class TestDataset(TrainDataset):
-    def __init__(self, segments, segment_labels, segment_logits, segment_length, input_size, frame_stride=1,
-                 n_test_segments=25):
-        super(TestDataset, self).__init__(segments, segment_labels, segment_logits, segment_length, input_size,
-                                          frame_stride)
-        self.n_test_segments = n_test_segments
-        self.transforms = Compose([
-            ToTensorVideo(),
-            ResizeVideo(input_size),
-            transforms.CenterCropVideo(crop_size=input_size),
-            ToZeroOneVideo(),
-            transforms.NormalizeVideo(breakfast.TENSOR_MEAN, breakfast.TENSOR_STD)
-        ])
-
-    def _load_segments(self, video_name, start, end):
-        n_frames = end - start
-        if n_frames < self.segment_length:
-            frame_ids = np.arange(start, end)
-            n_repeats = self.segment_length // n_frames
-            n_excess = self.segment_length - n_frames * n_repeats
-
-            frame_ids = np.concatenate([np.repeat(frame_ids[:n_excess], n_repeats + 1),
-                                        np.repeat(frame_ids[n_excess:], n_repeats)],
-                                       axis=0)
-            unique_frame_ids = np.arange(start, end)
-            unique_frames = [breakfast.read_frame(video_name, frame_id) for frame_id in unique_frame_ids]
-            video_segments = []
-            for frame_id in frame_ids:
-                frame_idx = int(frame_id - start)
-                video_segments.append(unique_frames[frame_idx])
-            video_segments = self.transforms(video_segments).unsqueeze(0)  # 1 x B x C x T x H x W
-        else:
-            if n_frames < self.segment_length * self.frame_stride:
-                max_stride = n_frames // self.segment_length
-            else:
-                max_stride = self.frame_stride
-            max_start = n_frames - max_stride * self.segment_length
-
-            if max_start <= start:
-                start_frames = [start]
-            else:
-                start_frames = np.arange(start, max_start)
-                if len(start_frames) > self.n_test_segments:
-                    sampled_start_frames = []
-                    n_start_frames = len(start_frames)
-                    for fi, start_frame in enumerate(start_frames):
-                        if (fi / n_start_frames) >= (len(sampled_start_frames) / self.n_test_segments):
-                            sampled_start_frames.append(start_frame)
-                            if len(sampled_start_frames) == self.n_test_segments:
-                                break
-                    start_frames = np.array(sampled_start_frames)
-
-            video_segments = []
-            for start_frame in start_frames:
-                frame_ids = np.arange(start_frame, end, max_stride)[:self.segment_length]
-                frames = [breakfast.read_frame(video_name, frame_id) for frame_id in frame_ids]
-                frames = self.transforms(frames)
-                video_segments.append(frames)
-            video_segments = torch.stack(video_segments, dim=0)  # N x C x T x H x W
-        return video_segments
-
-    def __getitem__(self, idx):
-        segment_dict = self.segments[idx]
-        logit = self.segment_logits[idx]
-        video_name = segment_dict['video-name']
-        start, end = segment_dict['start'], segment_dict['end']
-        assert start < end, '{0} has errors, logit {1}'.format(video_name, logit)
-        video_segments = self._load_segments(video_name, start, end)
-        n_video_segments = video_segments.shape[0]
-        return video_segments, n_video_segments, idx
-
-    @staticmethod
-    def collate_fn(batch):
-        video_segments, n_video_segments, video_idxs = zip(*batch)
-        video_segments = torch.cat(video_segments, dim=0)  # BN x C x T x H x W
-        n_video_segments = default_collate(n_video_segments)  # B
-        video_idxs = default_collate(video_idxs)  # B 
-        return video_segments, n_video_segments, video_idxs
+    pass
 
 
 class PredictionDataset(TestDataset):
@@ -415,32 +266,12 @@ def _parse_args():
     return argparser.parse_args()
 
 
-def _parse_split_data(split):
-    segments, labels, logits = breakfast.get_data(split)
-    valid_segments = []
-    valid_labels = []
-    valid_logits = []
-    for i, segment in enumerate(tqdm(segments)):
-        start, end = segment['start'], segment['end']
-        video_name = segment['video-name']
-        video_dir = os.path.join(breakfast.EXTRACTED_IMAGES_DIR, video_name)
-        n_video_frames = len(os.listdir(video_dir))
-        end = min(n_video_frames, end)
-        n_frames = end - start
-        if n_frames > 0 and 48 > logits[i] > 0:  # remove walk in and walk out.
-            segment['end'] = end
-            valid_segments.append(segment)
-            valid_labels.append(labels[i])
-            valid_logits.append(logits[i])
-    return [valid_segments, valid_labels, valid_logits]
-
-
 def main():
-    set_determinstic_mode()
+    set_determinstic_mode(seed=1538574472)
     args = _parse_args()
     trainer = Trainer(args.config, args.device)
-    train_data = _parse_split_data('train')
-    test_data = _parse_split_data('test')
+    train_data = breakfast.get_mstcn_data('train')
+    test_data = breakfast.get_mstcn_data('test')
     trainer.train(train_data, test_data)
 
 
