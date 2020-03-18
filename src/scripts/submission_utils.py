@@ -20,4 +20,4 @@ def _print_submission_accuracy(submission_file):
 
 
 if __name__ == '__main__':
-    _print_submission_accuracy('/mnt/HGST6/cs5242-project/submissions/baselines/base.csv')
+    _print_submission_accuracy('/mnt/HGST6/cs5242-project/submissions/action-segmentation/mstcn/base/fake.csv')
