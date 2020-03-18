@@ -56,8 +56,15 @@ def main():
     submission_timestamps = [line.strip().split(' ') for line in submission_timestamps]
     submission_timestamps = [np.array(timestamps).astype(int) for timestamps in submission_timestamps]
 
-    submission_str = 'Id,Category\n'
+    with open(breakfast.SUBMISSION_LABEL_FILE, 'r') as f:
+        submission_labels = f.readlines()
+    submission_labels = [label.strip() for label in submission_labels]
+    label_to_logit_dict = breakfast.read_mapping_file()
+    submission_logits = [label_to_logit_dict[label] for label in submission_labels]
+
     n_segments = 0
+    n_correct = 0
+    submission_str = 'Id,Category\n'
     for i, video_name in enumerate(video_names):
         video_timestamps = submission_timestamps[i]
         n_timestamps = len(video_timestamps)
@@ -67,9 +74,16 @@ def main():
             end = video_timestamps[j+1]
             segment_frame_predictions = video_frame_predictions[start:end]
             counts = np.bincount(segment_frame_predictions)
+
             segment_prediction = np.argmax(counts).item()
+            submission_logit = submission_logits[n_segments]
+            n_correct += int(segment_prediction == submission_logit)
+
             submission_str += '{0},{1}\n'.format(n_segments, segment_prediction)
             n_segments += 1
+    accuracy = n_correct / n_segments
+    print('INFO: submission accuracy: {}'.format(accuracy))
+
     submission_file = os.path.join(submission_dir, 'submission.csv')
     with open(submission_file, 'r') as f:
         f.write(submission_str)

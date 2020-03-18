@@ -29,6 +29,7 @@ MSTCN_SEGMENT_LABEL_DIR = os.path.join(MSTCN_DIR, 'segment-labels')
 MSTCN_FEATURE_DIR = os.path.join(MSTCN_DIR, 'features')
 
 SUBMISSION_LABEL_FILE = os.path.join(DATASET_DIR, 'test_segment.txt')
+SUBMISSION_GT_FILE = os.path.join(DATASET_DIR, 'test-segment-gt.txt')
 MEAN_FILE = os.path.join(DATASET_DIR, 'mean.npy')
 STD_FILE = os.path.join(DATASET_DIR, 'std.npy')
 N_CLASSES = 48
@@ -38,7 +39,7 @@ TENSOR_MEAN = [0.42384474, 0.39556269, 0.34748514]
 TENSOR_STD = [0.15591848, 0.14713841, 0.13312177]
 
 
-def _read_mapping_file():
+def read_mapping_file():
     with open(MAPPING_FILE, 'r') as f:
         mappings = f.readlines()
     mappings = np.array([mapping.strip().split(' ') for mapping in mappings])
@@ -121,7 +122,7 @@ def get_data(split):
         segments, labels = _get_video_data(videoname)
         all_segments.extend(list(segments))
         all_labels.extend(list(labels))
-    mapping_dict = _read_mapping_file()
+    mapping_dict = read_mapping_file()
     all_logits = [mapping_dict[label] for label in all_labels]
     return all_segments, all_labels, all_logits
 
@@ -282,7 +283,7 @@ def get_mstcn_data(split):
     gt_labels = [_read_mstcn_label(video_name) for video_name in video_names]
 
     gt_logits = []
-    label_to_logit_map = _read_mapping_file()
+    label_to_logit_map = read_mapping_file()
     for gt_label in gt_labels:
         gt_logit = [label_to_logit_map[label] for label in gt_label]
         gt_logits.append(gt_logit)
@@ -290,10 +291,37 @@ def get_mstcn_data(split):
     return video_files, gt_labels, gt_logits
 
 
+def _generate_test_segment_gt():
+    video_names = get_split_videonames('test')
+    with open(SUBMISSION_LABEL_FILE, 'r') as f:
+        submission_timestamps = f.readlines()
+    submission_timestamps = [line.strip().split(' ') for line in submission_timestamps]
+    submission_timestamps = [np.array(timestamps).astype(int) for timestamps in submission_timestamps]
+
+    gt_labels = [_read_mstcn_label(video_name) for video_name in video_names]
+    segment_labels = []
+    for i, video_labels in enumerate(gt_labels):
+        video_timestamps = submission_timestamps[i]
+        n_timestamps = len(video_timestamps)
+        video_labels = gt_labels[i]
+        for fi in range(n_timestamps - 1):
+            start = video_timestamps[fi]
+            end = video_timestamps[fi+1]
+            segment_label = video_labels[start:end]
+            assert len(np.unique(segment_label)) == 1, print(segment_label)
+            segment_label = segment_label[0]
+            segment_labels.append(segment_label)
+
+    with open(SUBMISSION_GT_FILE, 'w') as f:
+        for segment_label in segment_labels:
+            f.write(str(segment_label) + '\n')
+
+
 if __name__ == '__main__':
     # _check_mstcn_gt()
     # get_mstcn_data(split='train')
-    _generate_mstcn_segment_labels()
+    # _generate_mstcn_segment_labels()
+    _generate_test_segment_gt()
     # segments = get_submission_segments()
     # print(len(segments))
     # cvt_i3d_to_numpy()
