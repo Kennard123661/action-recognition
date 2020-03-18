@@ -202,8 +202,8 @@ class Trainer:
             predictions = self.model(feats, masks)
             predictions = torch.argmax(predictions[-1], dim=1)
             for i, prediction in enumerate(predictions):
-                prediction_len = torch.sum(masks[i, 0, :]).item()
-                prediction = prediction[prediction_len].detach().numpy().tolist()
+                prediction_len = torch.sum(masks[i, 0, :].int()).item()
+                prediction = prediction[:prediction_len].detach().cpu().numpy().tolist()
                 submission_predictions.append(prediction)
         return submission_predictions
 

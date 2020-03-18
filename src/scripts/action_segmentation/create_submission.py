@@ -10,6 +10,7 @@ if __name__ == '__main__':
 from scripts import set_determinstic_mode
 import data.breakfast as breakfast
 from config import ROOT_DIR
+from scripts.submission_utils import _print_submission_accuracy
 SUBMISSION_DIR = os.path.join(ROOT_DIR, 'submissions', 'action-segmentation')
 
 
@@ -46,7 +47,7 @@ def main():
     video_names = [feat_file.split('.')[0] for feat_file in video_names]
     for i, video_name in enumerate(video_names):
         frame_prediction_file = os.path.join(frame_prediction_dir, video_name + '.txt')
-        frame_predictions = frame_level_predictions[i]
+        frame_predictions = np.array(frame_level_predictions[i])
         with open(frame_prediction_file, 'w') as f:
             frame_predictions = ' '.join(frame_predictions.astype(str))
             f.write(frame_predictions + '\n')
@@ -56,14 +57,7 @@ def main():
     submission_timestamps = [line.strip().split(' ') for line in submission_timestamps]
     submission_timestamps = [np.array(timestamps).astype(int) for timestamps in submission_timestamps]
 
-    with open(breakfast.SUBMISSION_LABEL_FILE, 'r') as f:
-        submission_labels = f.readlines()
-    submission_labels = [label.strip() for label in submission_labels]
-    label_to_logit_dict = breakfast.read_mapping_file()
-    submission_logits = [label_to_logit_dict[label] for label in submission_labels]
-
     n_segments = 0
-    n_correct = 0
     submission_str = 'Id,Category\n'
     for i, video_name in enumerate(video_names):
         video_timestamps = submission_timestamps[i]
@@ -76,17 +70,13 @@ def main():
             counts = np.bincount(segment_frame_predictions)
 
             segment_prediction = np.argmax(counts).item()
-            submission_logit = submission_logits[n_segments]
-            n_correct += int(segment_prediction == submission_logit)
-
             submission_str += '{0},{1}\n'.format(n_segments, segment_prediction)
             n_segments += 1
-    accuracy = n_correct / n_segments
-    print('INFO: submission accuracy: {}'.format(accuracy))
 
     submission_file = os.path.join(submission_dir, 'submission.csv')
-    with open(submission_file, 'r') as f:
+    with open(submission_file, 'w') as f:
         f.write(submission_str)
+    _print_submission_accuracy(submission_file)
 
 
 if __name__ == '__main__':
