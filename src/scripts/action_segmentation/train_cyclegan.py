@@ -73,7 +73,6 @@ class Trainer:
                                                           dim=IN_CHANNELS).cuda(self.device)
         self.target_dis = cyclegan.VideoFeatDiscriminator(num_layers=N_LAYERS, num_f_maps=N_FEATURE_MAPS,
                                                           dim=IN_CHANNELS).cuda(self.device)
-        self._load_checkpoint()
 
         self.mstcn_model = mstcn.MultiStageModel(num_stages=N_STAGES, num_layers=N_LAYERS,
                                                  num_f_maps=N_FEATURE_MAPS,
@@ -255,7 +254,7 @@ class Trainer:
         dataloader = tdata.DataLoader(test_dataset, shuffle=False, batch_size=self.test_batch_size,
                                       collate_fn=test_dataset.collate_fn, pin_memory=False, num_workers=NUM_WORKERS)
         self.mstcn_model.eval()
-        self.source_to_target_gen.eval()
+        self.target_to_source_gen.eval()
         self.mstcn_model = self.mstcn_model.cuda(self.device)
         n_correct = 0
         n_predictions = 0
@@ -265,7 +264,7 @@ class Trainer:
                 logits = logits.cuda(self.device)
                 masks = masks.cuda(self.device)
 
-                generated_feats = self.target_to_source_gen(feats, masks)
+                generated_feats = self.target_to_source_gen(feats, masks[:, 0:1, :])
                 predictions = self.mstcn_model(generated_feats, masks)
                 predictions = torch.argmax(predictions[-1], dim=1)
                 n_correct += ((predictions == logits).float() * masks[:, 0, :]).sum().item()

@@ -24,7 +24,6 @@ class SingleStageModel(nn.Module):
         self.conv_1x1 = nn.Conv1d(in_channels, base_channels, 1)
         self.layers = nn.ModuleList([copy.deepcopy(DilatedResidualLayer(2 ** i, base_channels, base_channels))
                                      for i in range(n_layers)])
-
         self.conv_out = nn.Conv1d(base_channels, out_channels, 1)
 
     def forward(self, x, mask):
@@ -59,7 +58,7 @@ class VideoFeatGenerator(nn.Module):
         # out3 = self.stage3(out2 * mask, mask)
         # out3 = out3 + x
         # out = self.stage4(out3 * mask, mask)
-        out = self.net(x, mask)
+        out = F.relu(self.net(x, mask), inplace=True)
         return out
 
 
