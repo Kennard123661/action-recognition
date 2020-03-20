@@ -59,16 +59,16 @@ class VideoFeatGenerator(nn.Module):
 
 
 class VideoFeatDiscriminator(nn.Module):
-    def __init__(self, num_stages, num_layers, num_f_maps, dim, num_classes):
+    def __init__(self, num_stages, num_layers, num_f_maps, dim):
         super(VideoFeatDiscriminator, self).__init__()
-        self.stage1 = SingleStageModel(num_layers, num_f_maps, dim, num_classes)
-        self.stages = nn.ModuleList([copy.deepcopy(SingleStageModel(num_layers, num_f_maps, num_classes, num_classes)) for s in range(num_stages-1)])
+        self.stage1 = SingleStageModel(num_layers, num_f_maps, dim, 1)
+        self.stages = nn.ModuleList([copy.deepcopy(SingleStageModel(num_layers, num_f_maps, 1, 1)) for s in range(num_stages-1)])
 
     def forward(self, x, mask):
         out = self.stage1(x, mask)
         outputs = out.unsqueeze(0)
         for s in self.stages:
-            out = s(F.softmax(out, dim=1) * mask[:, 0:1, :], mask)
+            out = s(F.sigmoid(out) * mask[:, 0:1, :], mask)
             outputs = torch.cat((outputs, out.unsqueeze(0)), dim=0)
         return outputs
 
