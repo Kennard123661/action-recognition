@@ -69,16 +69,16 @@ class Trainer:
                                                                   reduction_factor=4).cuda(self.device)
         self.target_to_source_gen = deep_cycle.VideoFeatGenerator(n_layers=10, in_channels=IN_CHANNELS,
                                                                   reduction_factor=4).cuda(self.device)
-        self.source_dis = deep_cycle.VideoFeatDiscriminator(num_stages=N_STAGES, num_layers=N_LAYERS,
-                                                            num_f_maps=N_FEATURE_MAPS,
+        self.source_dis = deep_cycle.VideoFeatDiscriminator(num_layers=N_LAYERS, num_f_maps=N_FEATURE_MAPS,
                                                             dim=IN_CHANNELS).cuda(self.device)
-        self.target_dis = deep_cycle.VideoFeatDiscriminator(num_stages=N_STAGES, num_layers=N_LAYERS,
-                                                            num_f_maps=N_FEATURE_MAPS,
+        self.target_dis = deep_cycle.VideoFeatDiscriminator(num_layers=N_LAYERS, num_f_maps=N_FEATURE_MAPS,
                                                             dim=IN_CHANNELS).cuda(self.device)
+        self._load_checkpoint()
 
         self.mstcn_model = mstcn.MultiStageModel(num_stages=N_STAGES, num_layers=N_LAYERS,
                                                  num_f_maps=N_FEATURE_MAPS,
                                                  dim=IN_CHANNELS, num_classes=breakfast.N_MSTCN_CLASSES).cpu()
+        self.mstcn_model.eval()
         self.mstcn_model_config = configs['mstcn-config']
         self.load_mstcn_model()
 
@@ -182,7 +182,11 @@ class Trainer:
         print('INFO: training at epoch {}'.format(self.n_epochs))
         dataloader = tdata.DataLoader(train_dataset, shuffle=True, batch_size=self.train_batch_size, drop_last=True,
                                       collate_fn=train_dataset.collate_fn, pin_memory=False, num_workers=NUM_WORKERS)
-        self.mstcn_model.train()
+
+        self.source_to_target_gen.train()
+        self.target_to_source_gen.train()
+        self.source_dis.train()
+        self.target_dis.train()
         dis_losses = []
         gen_losses = []
         for source_feats, source_masks, target_feats, target_masks in tqdm(dataloader):
@@ -243,6 +247,8 @@ class Trainer:
         dataloader = tdata.DataLoader(test_dataset, shuffle=False, batch_size=self.test_batch_size,
                                       collate_fn=test_dataset.collate_fn, pin_memory=False, num_workers=NUM_WORKERS)
         self.mstcn_model.eval()
+        self.source_to_target_gen.eval()
+        self.mstcn_model = self.mstcn_model.cuda(self.device)
         n_correct = 0
         n_predictions = 0
         with torch.no_grad():
@@ -251,12 +257,13 @@ class Trainer:
                 logits = logits.cuda(self.device)
                 masks = masks.cuda(self.device)
 
-                generated_feats = self.target_to_source_gen(generated_feats)
-                predictions = self.mstcn_model(feats, masks)
+                generated_feats = self.target_to_source_gen(feats, masks)
+                predictions = self.mstcn_model(generated_feats, masks)
                 predictions = torch.argmax(predictions[-1], dim=1)
                 n_correct += ((predictions == logits).float() * masks[:, 0, :]).sum().item()
                 n_predictions += torch.sum(masks[:, 0, :]).item()
         accuracy = n_correct / n_predictions
+        self.mstcn_model = self.mstcn_model.cpu()
         return accuracy
 
     def _save_checkpoint(self, checkpoint_name='model'):
