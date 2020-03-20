@@ -22,10 +22,10 @@ if __name__ == '__main__':
 
 from scripts.action_segmentation import ACTION_SEG_CONFIG_DIR, ACTION_SEG_CHECKPOINT_DIR, ACTION_SEG_LOG_DIR
 from scripts import set_determinstic_mode
-from nets.action_seg import mstcn, deep_cycle
+from nets.action_seg import mstcn, cyclegan
 import data.breakfast as breakfast
 
-PREDICTION_CHECK_DIR = os.path.join(ACTION_SEG_CHECKPOINT_DIR, 'mstcn')
+MSTCN_CHECKPOINT_DIR = os.path.join(ACTION_SEG_CHECKPOINT_DIR, 'mstcn')
 CHECKPOINT_DIR = os.path.join(ACTION_SEG_CHECKPOINT_DIR, 'cyclegan')
 LOG_DIR = os.path.join(ACTION_SEG_LOG_DIR, 'cyclegan')
 CONFIG_DIR = os.path.join(ACTION_SEG_CONFIG_DIR, 'cyclegan')
@@ -65,14 +65,14 @@ class Trainer:
         if not os.path.exists(self.checkpoint_dir):
             os.makedirs(self.checkpoint_dir)
 
-        self.source_to_target_gen = deep_cycle.VideoFeatGenerator(n_layers=10, in_channels=IN_CHANNELS,
-                                                                  reduction_factor=4).cuda(self.device)
-        self.target_to_source_gen = deep_cycle.VideoFeatGenerator(n_layers=10, in_channels=IN_CHANNELS,
-                                                                  reduction_factor=4).cuda(self.device)
-        self.source_dis = deep_cycle.VideoFeatDiscriminator(num_layers=N_LAYERS, num_f_maps=N_FEATURE_MAPS,
-                                                            dim=IN_CHANNELS).cuda(self.device)
-        self.target_dis = deep_cycle.VideoFeatDiscriminator(num_layers=N_LAYERS, num_f_maps=N_FEATURE_MAPS,
-                                                            dim=IN_CHANNELS).cuda(self.device)
+        self.source_to_target_gen = cyclegan.VideoFeatGenerator(n_layers=10, in_channels=IN_CHANNELS,
+                                                                reduction_factor=4).cuda(self.device)
+        self.target_to_source_gen = cyclegan.VideoFeatGenerator(n_layers=10, in_channels=IN_CHANNELS,
+                                                                reduction_factor=4).cuda(self.device)
+        self.source_dis = cyclegan.VideoFeatDiscriminator(num_layers=N_LAYERS, num_f_maps=N_FEATURE_MAPS,
+                                                          dim=IN_CHANNELS).cuda(self.device)
+        self.target_dis = cyclegan.VideoFeatDiscriminator(num_layers=N_LAYERS, num_f_maps=N_FEATURE_MAPS,
+                                                          dim=IN_CHANNELS).cuda(self.device)
         self._load_checkpoint()
 
         self.mstcn_model = mstcn.MultiStageModel(num_stages=N_STAGES, num_layers=N_LAYERS,
@@ -80,7 +80,7 @@ class Trainer:
                                                  dim=IN_CHANNELS, num_classes=breakfast.N_MSTCN_CLASSES).cpu()
         self.mstcn_model.eval()
         self.mstcn_model_config = configs['mstcn-config']
-        self.load_mstcn_model()
+        self._load_mstcn_model()
 
         self.reconstruction_loss_fn = nn.L1Loss()
 
@@ -137,11 +137,11 @@ class Trainer:
             if isinstance(self.gen_scheduler, optim.lr_scheduler.StepLR):
                 self.gen_scheduler.step(epoch)
 
-    def load_mstcn_model(self):
-        checkpoint_file = os.path.join(PREDICTION_CHECK_DIR, self.mstcn_model_config, 'model.pth')
+    def _load_mstcn_model(self):
+        checkpoint_file = os.path.join(MSTCN_CHECKPOINT_DIR, self.mstcn_model_config, 'model.pth')
         assert os.path.exists(checkpoint_file)
         print('INFO: loading pretrained mstcn checkpoint {}'.format(checkpoint_file))
-        checkpoint = torch.load(checkpoint_file, map_location=self.mstcn_model.get_device())
+        checkpoint = torch.load(checkpoint_file, map_location='cpu')
         self.mstcn_model.load_state_dict(checkpoint['model'])
 
     def _get_reconstruction_loss(self, original_feats, reconstructed_feats, masks):
@@ -151,7 +151,7 @@ class Trainer:
             original_source = original_feats[i]  # D x N
 
             mask = masks[i]
-            video_len = torch.sum(mask[0:1])
+            video_len = torch.sum(mask).int().item()
             reconstructed_source = reconstructed_source[:video_len]
             original_source = original_source[:video_len]
             if reconstruction_loss is None:
@@ -160,20 +160,26 @@ class Trainer:
             else:
                 reconstruction_loss += self.reconstruction_loss_fn(reconstructed_source.transpose(1, 0),
                                                                    original_source.transpose(1, 0))
-        return reconstruction_loss
+        return reconstruction_loss / len(reconstructed_feats)
 
     @staticmethod
-    def _get_disciminator_loss(dis_model, positive_feats, negative_feats):
-        positive_logits = dis_model(positive_feats)
-        negative_logits = dis_model(negative_feats)
+    def _get_disciminator_loss(dis_model, positive_feats, negative_feats, positive_masks, negative_masks):
+        positive_logits = dis_model(positive_feats, positive_masks)
+        negative_logits = dis_model(negative_feats, negative_masks)
 
         loss = None
-        for pos_logits in positive_logits:
-            for neg_logits in negative_logits:
+        for i, pos_logits in enumerate(positive_logits):
+            pos_mask = positive_masks[i]
+            n_positive = torch.sum(pos_mask).int().item()
+            for j, neg_logits in enumerate(negative_logits):
+                neg_mask = negative_masks[j]
+                n_negative = torch.sum(neg_mask).int().item()
+                pos_logits = pos_logits[:, :n_positive]
+                neg_logits = neg_logits[:, :n_negative]
                 if loss is None:
-                    loss = (pos_logits - neg_logits - 1)**2
+                    loss = (torch.mean(pos_logits) - torch.mean(neg_logits) - 1)**2
                 else:
-                    loss += (pos_logits - neg_logits - 1)**2
+                    loss += (torch.mean(pos_logits) - torch.mean(neg_logits) - 1)**2
         n_losses = positive_logits.shape[0] * negative_logits.shape[0]
         dis_loss = loss / n_losses
         return dis_loss
@@ -194,10 +200,8 @@ class Trainer:
             source_masks = source_masks.cuda(self.device)
             target_feats = target_feats.cuda(self.device)
             target_masks = target_masks.cuda(self.device)
-            self.source_to_target_gen.zero_grad()
-            self.target_to_source_gen.zero_grad()
-            self.source_dis.zero_grad()
-            self.target_dis.zero_grad()
+            self.gen_optimizer.zero_grad()
+            self.dis_optimizer.zero_grad()
 
             # train the generator
             fake_target_feats = self.source_to_target_gen(source_feats, source_masks)
@@ -209,20 +213,24 @@ class Trainer:
             target_reconstruction_loss = self._get_reconstruction_loss(target_feats, reconstructed_target_feats,
                                                                        target_masks)
             source_gen_loss = self._get_disciminator_loss(dis_model=self.source_dis, positive_feats=fake_source_feats,
-                                                          negative_feats=source_feats)
+                                                          negative_feats=source_feats, positive_masks=target_masks,
+                                                          negative_masks=source_masks)
             target_gen_loss = self._get_disciminator_loss(dis_model=self.target_dis, positive_feats=fake_target_feats,
-                                                          negative_feats=target_feats)
+                                                          negative_feats=target_feats, positive_masks=source_masks,
+                                                          negative_masks=target_masks)
             gen_loss = source_reconstruction_loss + target_reconstruction_loss + source_gen_loss + target_gen_loss
             gen_loss.backward()
             self.gen_optimizer.step()
 
             # train the discriminator
-            self.source_dis.zero_grad()
-            self.target_dis.zero_grad()
+            self.dis_optimizer.zero_grad()
             source_dis_loss = self._get_disciminator_loss(self.source_dis, positive_feats=source_feats,
-                                                          negative_feats=fake_source_feats.detach())
+                                                          negative_feats=fake_source_feats.detach(),
+                                                          positive_masks=source_masks, negative_masks=target_masks)
             target_dis_loss = self._get_disciminator_loss(self.target_dis, positive_feats=target_feats,
-                                                          negative_feats=fake_target_feats.detach())
+                                                          negative_feats=fake_target_feats.detach(),
+                                                          positive_masks=target_masks,
+                                                          negative_masks=source_masks)
             dis_loss = (target_dis_loss + source_dis_loss) / 2
             dis_loss.backward()
             self.dis_optimizer.step()
@@ -352,12 +360,12 @@ class TrainDataset(tdata.Dataset):
             max_video_length = max(feature.shape[1], max_video_length)
 
         padded_features = torch.zeros(len(features), IN_CHANNELS, max_video_length, dtype=torch.float)
-        masks = torch.zeros(len(features), breakfast.N_MSTCN_CLASSES, max_video_length, dtype=torch.float)
+        masks = torch.zeros(len(features), max_video_length, dtype=torch.float)
 
         for i, feature in enumerate(features):
             video_len = feature.shape[1]
             padded_features[i, :, :video_len] = feature
-            masks[i, :, :video_len] = torch.ones(breakfast.N_MSTCN_CLASSES, video_len)
+            masks[i, :video_len] = torch.ones(video_len)
         return padded_features, masks
 
     @staticmethod
