@@ -24,10 +24,12 @@ from scripts.action_segmentation import ACTION_SEG_CONFIG_DIR, ACTION_SEG_CHECKP
 from scripts import set_determinstic_mode
 from nets.action_seg import mstcn
 import data.breakfast as breakfast
+from scripts.action_segmentation.create_submission import get_cls_results
 
 CHECKPOINT_DIR = os.path.join(ACTION_SEG_CHECKPOINT_DIR, 'mstcn')
 LOG_DIR = os.path.join(ACTION_SEG_LOG_DIR, 'mstcn')
 CONFIG_DIR = os.path.join(ACTION_SEG_CONFIG_DIR, 'mstcn')
+SUBMISSION_DIR = os.path.join('/mnt/HGST6/cs5242-project/submissions/action-segmentation')
 NUM_WORKERS = 2
 
 N_STAGES = 4
@@ -86,6 +88,7 @@ class Trainer:
         else:
             raise ValueError('no such scheduler')
         self._load_checkpoint()
+        self.submission_dir = os.path.join(SUBMISSION_DIR, self.experiment)
 
     def train(self, train_data, test_data):
         train_segments, train_labels, train_logits = train_data
@@ -103,12 +106,15 @@ class Trainer:
             self._save_checkpoint()  # update the latest model
             train_acc = self.test_step(train_val_dataset)
             test_acc = self.test_step(test_dataset)
-            print('INFO: at epoch {}, the train accuracy is {} and the test accuracy is {}'.format(self.n_epochs,
-                                                                                                   train_acc, test_acc))
+            submission_acc = self.get_submission_acc(test_dataset)
+            print('INFO: at epoch {}, the train accuracy is {} and the test accuracy is {} submission acc is {}'
+                  .format(self.n_epochs, train_acc, test_acc, submission_acc))
             log_dict = {
                 'train': train_acc,
-                'test': test_acc
+                'test': test_acc,
+                'submission': submission_acc
             }
+            exit()
             self.tboard_writer.add_scalars('accuracy', log_dict, self.n_epochs)
 
             if isinstance(self.scheduler, optim.lr_scheduler.StepLR):
@@ -146,6 +152,20 @@ class Trainer:
         if isinstance(self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):
             self.scheduler.step(avg_loss)
 
+    def get_submission_acc(self, test_dataset):
+        dataloader = tdata.DataLoader(test_dataset, shuffle=False, batch_size=self.test_batch_size,
+                                      collate_fn=test_dataset.collate_fn, pin_memory=False, num_workers=NUM_WORKERS)
+        self.model.eval()
+        frame_level_predictions = []
+        with torch.no_grad():
+            for feats, logits, masks in tqdm(dataloader):
+                feats = feats.cuda(self.device)
+                masks = masks.cuda(self.device)
+                predictions = self.model(feats, masks)
+                predictions = torch.argmax(predictions[-1], dim=1)
+                frame_level_predictions.extend(predictions.detach().cpu().numpy().tolist())
+        return get_cls_results(frame_level_predictions, submission_dir=self.submission_dir)
+
     def test_step(self, test_dataset):
         dataloader = tdata.DataLoader(test_dataset, shuffle=False, batch_size=self.test_batch_size,
                                       collate_fn=test_dataset.collate_fn, pin_memory=False, num_workers=NUM_WORKERS)
@@ -157,7 +177,6 @@ class Trainer:
                 feats = feats.cuda(self.device)
                 logits = logits.cuda(self.device)
                 masks = masks.cuda(self.device)
-                self.optimizer.zero_grad()
                 predictions = self.model(feats, masks)
                 predictions = torch.argmax(predictions[-1], dim=1)
                 n_correct += ((predictions == logits).float() * masks[:, 0, :]).sum().item()
@@ -193,18 +212,16 @@ class Trainer:
         dataset = PredictionDataset(submission_feats)
         dataloader = tdata.DataLoader(dataset, shuffle=False, batch_size=self.test_batch_size,
                                       collate_fn=dataset.collate_fn, pin_memory=False, num_workers=NUM_WORKERS)
-
-        submission_predictions = []
-        for feats, masks in tqdm(dataloader):
-            feats = feats.cuda(self.device)
-            masks = masks.cuda(self.device)
-            self.optimizer.zero_grad()
-            predictions = self.model(feats, masks)
-            predictions = torch.argmax(predictions[-1], dim=1)
-            for i, prediction in enumerate(predictions):
-                prediction_len = torch.sum(masks[i, 0, :].int()).item()
-                prediction = prediction[:prediction_len].detach().cpu().numpy().tolist()
-                submission_predictions.append(prediction)
+        with torch.no_grad():
+            self.model.eval()
+            submission_predictions = []
+            for feats, masks in tqdm(dataloader):
+                feats = feats.cuda(self.device)
+                masks = masks.cuda(self.device)
+                self.optimizer.zero_grad()
+                predictions = self.model(feats, masks)
+                predictions = torch.argmax(predictions[-1], dim=1)
+                submission_predictions.extend(predictions.detach().cpu().numpy().tolist())
         return submission_predictions
 
 

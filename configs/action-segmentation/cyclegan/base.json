@@ -1,0 +1,20 @@
+{
+  "test-batch-size": 8,
+  "train-batch-size": 1,
+
+  "max-epochs": 50,
+  "optim": "adam",
+  "momentum": 0.9,
+  "nesterov": 0,
+
+  "mstcn-config": "base",
+  "gen-lr": 0.0005,
+  "dis-lr": 0.0005,
+  "scheduler": "step",
+  "gen-lr-step": 50,
+  "dis-lr-step": 50,
+  "gen-lr-decay": 0.1,
+  "dis-lr-decay": 0.1,
+
+  "i3d-length": 400
+}

@@ -2,14 +2,14 @@
   "test-batch-size": 8,
   "train-batch-size": 1,
 
-  "max-epochs": 50,
+  "max-epochs": 100,
   "optim": "adam",
   "momentum": 0.9,
   "nesterov": 0,
 
   "lr": 0.0005,
   "scheduler": "step",
-  "lr-step": 50,
+  "lr-step": 101,
   "lr-decay": 0.1,
 
   "i3d-length": 400
