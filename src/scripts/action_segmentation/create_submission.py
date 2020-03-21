@@ -52,10 +52,12 @@ def get_cls_results(frame_level_predictions, submission_dir):
         for j in range(n_timestamps - 1):
             start = video_timestamps[j]
             end = video_timestamps[j + 1]
-            segment_frame_predictions = video_frame_predictions[start:end]
-            counts = np.bincount(segment_frame_predictions)
-
-            segment_prediction = np.argmax(counts).item()
+            # vid_len = end - start
+            # segment_frame_predictions = video_frame_predictions[start:end]
+            # counts = np.bincount(segment_frame_predictions)
+            #
+            # segment_prediction = np.argmax(counts).item()
+            segment_prediction = video_frame_predictions[(start + end) // 2]
             submission_str += '{0},{1}\n'.format(n_segments, segment_prediction)
             n_segments += 1
 
