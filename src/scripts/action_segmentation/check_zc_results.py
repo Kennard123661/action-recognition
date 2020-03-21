@@ -10,7 +10,7 @@ if __name__ == '__main__':
 from scripts import set_determinstic_mode
 import data.breakfast as breakfast
 from config import ROOT_DIR
-from scripts.submission_utils import _print_submission_accuracy
+from scripts.submission_utils import get_submission_accuracy
 SUBMISSION_DIR = os.path.join(ROOT_DIR, 'submissions', 'action-segmentation')
 
 
@@ -64,7 +64,7 @@ def main():
     submission_file = os.path.join(submission_dir, 'submission.csv')
     with open(submission_file, 'w') as f:
         f.write(submission_str)
-    _print_submission_accuracy(submission_file)
+    get_submission_accuracy(submission_file)
 
 
 if __name__ == '__main__':

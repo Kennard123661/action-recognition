@@ -2,7 +2,7 @@ import numpy as np
 from data.breakfast import SUBMISSION_GT_FILE, read_mapping_file
 
 
-def _print_submission_accuracy(submission_file):
+def get_submission_accuracy(submission_file):
     with open(submission_file, 'r') as f:
         predictions = f.readlines()[1:]
     predictions = [prediction.strip().split(',') for prediction in predictions]
@@ -17,7 +17,8 @@ def _print_submission_accuracy(submission_file):
     is_equal = np.equal(predictions, gt)
     accuracy = np.mean(is_equal)
     print('INFO: submission accuracy: {}'.format(accuracy))
+    return accuracy
 
 
 if __name__ == '__main__':
-    _print_submission_accuracy('/mnt/HGST6/cs5242-project/submissions/action-segmentation/mstcn/base/fake.csv')
+    get_submission_accuracy('/mnt/HGST6/cs5242-project/submissions/action-segmentation/mstcn/base/fake.csv')
