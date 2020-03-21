@@ -9,7 +9,8 @@ VIDEO_DIR = os.path.join(DATASET_DIR, 'videos')
 NEW_LABEL_DIR = os.path.join(DATASET_DIR, 'new-labels')
 EXTRACTED_DIR = os.path.join(DATASET_DIR, 'extracted')
 
-COARSE_LABELS = ['cereals' 'coffee' 'friedegg' 'juice' 'milk' 'pancake' 'salat' 'sandwich', 'scrambledegg' 'tea']
+COARSE_LABELS = ['cereals', 'coffee', 'friedegg', 'juice', 'milk', 'pancake', 'salat', 'sandwich',
+                 'scrambledegg', 'tea']
 EXTRACTED_IMAGES_DIR = os.path.join(EXTRACTED_DIR, 'images')
 N_VIDEO_FRAMES_DIR = os.path.join(DATASET_DIR, 'n-video-frames')
 LABEL_DIR = os.path.join(DATASET_DIR, 'labels')

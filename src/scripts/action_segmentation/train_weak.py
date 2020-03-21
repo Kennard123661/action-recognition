@@ -99,7 +99,7 @@ class Trainer:
         train_segments, train_labels, train_logits = train_data
         test_segments, test_labels, test_logits = test_data
 
-        train_dataset = TrainDataset(train_segments, train_labels, train_logits)
+        train_dataset = TrainDataset(train_segments, train_labels, train_logits, test_segments)
         test_dataset = TestDataset(test_segments, test_labels, test_logits)
         train_val_dataset = TestDataset(train_segments, train_labels, train_logits)
 
@@ -119,7 +119,6 @@ class Trainer:
                 'test': test_acc,
                 'submission': submission_acc
             }
-            exit()
             self.tboard_writer.add_scalars('accuracy', log_dict, self.n_epochs)
 
             if isinstance(self.scheduler, optim.lr_scheduler.StepLR):
@@ -140,8 +139,8 @@ class Trainer:
             source_masks = source_masks.cuda(self.device)
             target_features = target_features.cuda(self.device)
             target_coarse_logits = target_coarse_logits.cuda(self.device)
-            target_masks = target_masks.coarse_logits(self.device)
-            self.model.zero_grad()
+            target_masks = target_masks.cuda(self.device)
+            self.optimizer.zero_grad()
 
             source_predictions = self.model(source_features, source_masks)
             fine_cls_loss = None
@@ -160,7 +159,7 @@ class Trainer:
                                                    source_masks[:, :, 1:])
 
             coarse_predictions = []
-            source_coarse_outs = self.coarse_cls_model(source_predictions, source_masks)
+            source_coarse_outs = self.coarse_cls_model(source_predictions[0], source_masks)
             for i, source_coarse_out in enumerate(source_coarse_outs):
                 pred_length = torch.sum(source_masks[i, 0, :]).int()
                 source_coarse_out = source_coarse_out[:, :pred_length]
@@ -168,7 +167,7 @@ class Trainer:
                 coarse_predictions.append(coarse_prediction)
 
             target_predictions = self.model(target_features, target_masks)
-            target_coarse_outs = self.coarse_cls_model(target_predictions, target_masks)
+            target_coarse_outs = self.coarse_cls_model(target_predictions[0], target_masks)
             for i, target_coarse_out in enumerate(target_coarse_outs):
                 pred_length = torch.sum(target_masks[i, 0, :]).int()
                 target_coarse_out = target_coarse_out[:, :pred_length]
@@ -271,6 +270,7 @@ class TrainDataset(tdata.Dataset):
         self.source_labels = source_labels
         self.source_logits = source_logits
         self.target_feat_files = target_feat_files
+        self.n_targets = len(target_feat_files)
         self.n_classes = breakfast.N_MSTCN_CLASSES
 
     def __len__(self):
@@ -282,7 +282,7 @@ class TrainDataset(tdata.Dataset):
         source_coarse_label = source_coarse_label.split('.')[0].split('_')[-1]
         source_features = np.load(source_feat_file)
 
-        target_idx = np.random.choice(np.random.choice(len(self.target_feat_files)))
+        target_idx = np.random.choice(self.n_targets)
         target_feat_file = self.target_feat_files[target_idx]
         target_coarse_label = os.path.split(target_feat_file)[-1]
         target_coarse_label = target_coarse_label.split('.')[0].split('_')[-1]
