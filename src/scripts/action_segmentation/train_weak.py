@@ -26,10 +26,10 @@ from nets.action_seg import mstcn
 import data.breakfast as breakfast
 from scripts.action_segmentation.create_submission import get_cls_results
 
-CHECKPOINT_DIR = os.path.join(ACTION_SEG_CHECKPOINT_DIR, 'mstcn')
-LOG_DIR = os.path.join(ACTION_SEG_LOG_DIR, 'mstcn')
-CONFIG_DIR = os.path.join(ACTION_SEG_CONFIG_DIR, 'mstcn')
-SUBMISSION_DIR = os.path.join('/mnt/HGST6/cs5242-project/submissions/action-segmentation')
+CHECKPOINT_DIR = os.path.join(ACTION_SEG_CHECKPOINT_DIR, 'weakly-supervised')
+LOG_DIR = os.path.join(ACTION_SEG_LOG_DIR, 'weakly-supervised')
+CONFIG_DIR = os.path.join(ACTION_SEG_CONFIG_DIR, 'weakly-supervised')
+SUBMISSION_DIR = os.path.join('/mnt/HGST6/cs5242-project/submissions/action-segmentation/weakly-supervised-temp')
 NUM_WORKERS = 2
 
 N_STAGES = 4
