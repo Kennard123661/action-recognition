@@ -335,7 +335,45 @@ class TrainDataset(tdata.Dataset):
 
 
 class TestDataset(TrainDataset):
-    pass
+    def __init__(self, feat_files, labels, logits):
+        super(TrainDataset, self).__init__()
+        self.video_feat_files = feat_files
+        self.labels = labels
+        self.logits = logits
+        self.n_classes = breakfast.N_MSTCN_CLASSES
+
+    def __len__(self):
+        return len(self.video_feat_files)
+
+    def __getitem__(self, idx):
+        video_feat_file = self.video_feat_files[idx]
+        features = np.load(video_feat_file)
+        logits = self.logits[idx]
+        assert features.shape[1] == len(logits)
+        features = features[:, ::SAMPLE_RATE]
+        logits = np.array(logits)[::SAMPLE_RATE]
+
+        features = torch.from_numpy(features)
+        logits = torch.from_numpy(logits)
+        return features, logits
+
+    @staticmethod
+    def collate_fn(batch):
+        features, logits = zip(*batch)
+        max_video_length = 0
+        for feature in features:
+            max_video_length = max(feature.shape[1], max_video_length)
+
+        padded_features = torch.zeros(len(features), IN_CHANNELS, max_video_length, dtype=torch.float)
+        padded_logits = torch.zeros(len(features), max_video_length, dtype=torch.long) * -100
+        masks = torch.zeros(len(features), breakfast.N_MSTCN_CLASSES, max_video_length, dtype=torch.float)
+
+        for i, feature in enumerate(features):
+            video_len = feature.shape[1]
+            padded_features[i, :, :video_len] = feature
+            padded_logits[i, :video_len] = logits[i]
+            masks[i, :, :video_len] = torch.ones(breakfast.N_MSTCN_CLASSES, video_len)
+        return padded_features, padded_logits, masks
 
 
 class PredictionDataset(tdata.Dataset):
