@@ -76,10 +76,13 @@ class Trainer:
 
         self.mstcn_model = mstcn.MultiStageModel(num_stages=N_STAGES, num_layers=N_LAYERS,
                                                  num_f_maps=N_FEATURE_MAPS,
-                                                 dim=IN_CHANNELS, num_classes=breakfast.N_MSTCN_CLASSES).cpu()
+                                                 dim=IN_CHANNELS, num_classes=breakfast.N_MSTCN_CLASSES)\
+            .cuda(self.device)
         self.mstcn_model.eval()
         self.mstcn_model_config = configs['mstcn-config']
         self._load_mstcn_model()
+        self.ce_loss = nn.CrossEntropyLoss(ignore_index=-100).cuda(self.device)
+        self.mse_loss = nn.MSELoss(reduction='none').cuda(self.device)
 
         self.reconstruction_loss_fn = nn.L1Loss()
 
@@ -115,7 +118,7 @@ class Trainer:
         train_segments, train_labels, train_logits = train_data
         test_segments, test_labels, test_logits = test_data
 
-        train_dataset = TrainDataset(train_segments, test_segments)
+        train_dataset = TrainDataset(train_segments, test_segments, train_logits)
         test_dataset = TestDataset(test_segments, test_labels, test_logits)
 
         start_epoch = self.n_epochs
@@ -163,6 +166,9 @@ class Trainer:
 
     @staticmethod
     def _get_disciminator_loss(dis_model, positive_feats, negative_feats, positive_masks, negative_masks):
+        # print(negative_feats.shape)
+        # print(negative_masks.shape)
+        # exit()
         positive_logits = dis_model(positive_feats, positive_masks)
         negative_logits = dis_model(negative_feats, negative_masks)
 
@@ -183,6 +189,20 @@ class Trainer:
         dis_loss = loss / n_losses
         return dis_loss
 
+    def _get_cls_loss(self, feats, masks, logits):
+        predictions = self.mstcn_model(feats, masks)
+        loss = None
+        for p in predictions:
+            if loss is None:
+                loss = self.ce_loss(p.transpose(2, 1).contiguous().view(-1, breakfast.N_MSTCN_CLASSES), logits.view(-1))
+            else:
+                loss += self.ce_loss(p.transpose(2, 1).contiguous().view(-1, breakfast.N_MSTCN_CLASSES),
+                                     logits.view(-1))
+            loss += 0.15 * torch.mean(torch.clamp(
+                self.mse_loss(F.log_softmax(p[:, :, 1:], dim=1),
+                              F.log_softmax(p.detach()[:, :, :-1], dim=1)), min=0, max=16) * masks[:, :, 1:])
+        return loss / predictions.shape[0]
+
     def train_step(self, train_dataset):
         print('INFO: training at epoch {}'.format(self.n_epochs))
         dataloader = tdata.DataLoader(train_dataset, shuffle=True, batch_size=self.train_batch_size, drop_last=True,
@@ -194,30 +214,36 @@ class Trainer:
         self.target_dis.train()
         dis_losses = []
         gen_losses = []
-        for source_feats, source_masks, target_feats, target_masks in tqdm(dataloader):
+        for source_feats, source_masks, target_feats, target_masks, source_logits in tqdm(dataloader):
             source_feats = source_feats.cuda(self.device)
             source_masks = source_masks.cuda(self.device)
             target_feats = target_feats.cuda(self.device)
             target_masks = target_masks.cuda(self.device)
+            source_logits = source_logits.cuda(self.device)
             self.gen_optimizer.zero_grad()
             self.dis_optimizer.zero_grad()
+            self.mstcn_model.zero_grad()
 
             # train the generator
-            fake_target_feats = self.source_to_target_gen(source_feats, source_masks)
-            fake_source_feats = self.target_to_source_gen(target_feats, target_masks)
-            reconstructed_source_feats = self.target_to_source_gen(fake_target_feats, source_masks)  # B x D x N
-            reconstructed_target_feats = self.source_to_target_gen(fake_source_feats, target_masks)
+            fake_target_feats = self.source_to_target_gen(source_feats, source_masks[:, 0, :])
+            fake_source_feats = self.target_to_source_gen(target_feats, target_masks[:, 0, :])
+            reconstructed_source_feats = self.target_to_source_gen(fake_target_feats, source_masks[:, 0, :])  # B x D x N
+            reconstructed_target_feats = self.source_to_target_gen(fake_source_feats, target_masks[:, 0, :])
             source_reconstruction_loss = self._get_reconstruction_loss(source_feats, reconstructed_source_feats,
-                                                                       source_masks)
+                                                                       source_masks[:, 0, :])
             target_reconstruction_loss = self._get_reconstruction_loss(target_feats, reconstructed_target_feats,
-                                                                       target_masks)
+                                                                       target_masks[:, 0, :])
             source_gen_loss = self._get_disciminator_loss(dis_model=self.source_dis, positive_feats=fake_source_feats,
-                                                          negative_feats=source_feats, positive_masks=target_masks,
-                                                          negative_masks=source_masks)
+                                                          negative_feats=source_feats,
+                                                          positive_masks=target_masks[:, 0, :],
+                                                          negative_masks=source_masks[:, 0, :])
             target_gen_loss = self._get_disciminator_loss(dis_model=self.target_dis, positive_feats=fake_target_feats,
-                                                          negative_feats=target_feats, positive_masks=source_masks,
-                                                          negative_masks=target_masks)
-            gen_loss = source_reconstruction_loss + target_reconstruction_loss + source_gen_loss + target_gen_loss
+                                                          negative_feats=target_feats,
+                                                          positive_masks=source_masks[:, 0, :],
+                                                          negative_masks=target_masks[:, 0, :])
+            cls_preserving_loss = self._get_cls_loss(fake_target_feats, source_masks, source_logits)
+            gen_loss = source_reconstruction_loss + target_reconstruction_loss + source_gen_loss + target_gen_loss + \
+                       cls_preserving_loss
             gen_loss.backward()
             self.gen_optimizer.step()
 
@@ -225,11 +251,12 @@ class Trainer:
             self.dis_optimizer.zero_grad()
             source_dis_loss = self._get_disciminator_loss(self.source_dis, positive_feats=source_feats,
                                                           negative_feats=fake_source_feats.detach(),
-                                                          positive_masks=source_masks, negative_masks=target_masks)
+                                                          positive_masks=source_masks[:, 0, :],
+                                                          negative_masks=target_masks[:, 0, :])
             target_dis_loss = self._get_disciminator_loss(self.target_dis, positive_feats=target_feats,
                                                           negative_feats=fake_target_feats.detach(),
-                                                          positive_masks=target_masks,
-                                                          negative_masks=source_masks)
+                                                          positive_masks=target_masks[:, 0, :],
+                                                          negative_masks=source_masks[:, 0, :])
             dis_loss = (target_dis_loss + source_dis_loss) / 2
             dis_loss.backward()
             self.dis_optimizer.step()
@@ -255,7 +282,6 @@ class Trainer:
                                       collate_fn=test_dataset.collate_fn, pin_memory=False, num_workers=NUM_WORKERS)
         self.mstcn_model.eval()
         self.target_to_source_gen.eval()
-        self.mstcn_model = self.mstcn_model.cuda(self.device)
         n_correct = 0
         n_predictions = 0
         with torch.no_grad():
@@ -270,7 +296,6 @@ class Trainer:
                 n_correct += ((predictions == logits).float() * masks[:, 0, :]).sum().item()
                 n_predictions += torch.sum(masks[:, 0, :]).item()
         accuracy = n_correct / n_predictions
-        self.mstcn_model = self.mstcn_model.cpu()
         return accuracy
 
     def _save_checkpoint(self, checkpoint_name='model'):
@@ -326,9 +351,10 @@ class Trainer:
 
 
 class TrainDataset(tdata.Dataset):
-    def __init__(self, source_feat_files, target_feat_files):
+    def __init__(self, source_feat_files, target_feat_files, source_logits):
         super(TrainDataset, self).__init__()
         self.source_feat_files = source_feat_files
+        self.source_logits = source_logits
         self.target_feat_files = target_feat_files
         self.n_classes = breakfast.N_MSTCN_CLASSES
 
@@ -342,6 +368,7 @@ class TrainDataset(tdata.Dataset):
         source_idx = np.random.choice(np.arange(n_source))
         target_idx = np.random.choice(np.arange(n_target))
 
+        source_logits = np.array(self.source_logits[source_idx])
         source_feat_file = self.source_feat_files[source_idx]
         target_feat_file = self.source_feat_files[target_idx]
 
@@ -350,29 +377,37 @@ class TrainDataset(tdata.Dataset):
 
         source_feats = torch.from_numpy(source_feats)
         target_feats = torch.from_numpy(target_feats)
-        return source_feats, target_feats
+        source_logits = torch.from_numpy(source_logits)
+        return source_feats, target_feats, source_logits
 
     @staticmethod
-    def _pad_features(features):
+    def _pad_features(features, logits=None):
         max_video_length = 0
         for feature in features:
             max_video_length = max(feature.shape[1], max_video_length)
 
         padded_features = torch.zeros(len(features), IN_CHANNELS, max_video_length, dtype=torch.float)
-        masks = torch.zeros(len(features), max_video_length, dtype=torch.float)
+        padded_logits = torch.ones(len(features), max_video_length, dtype=torch.long) * -100
+        masks = torch.zeros(len(features), breakfast.N_MSTCN_CLASSES, max_video_length, dtype=torch.float)
 
         for i, feature in enumerate(features):
             video_len = feature.shape[1]
+            if logits is not None:
+                logit = logits[i]
+                padded_logits[i, :video_len] = logit
             padded_features[i, :, :video_len] = feature
-            masks[i, :video_len] = torch.ones(video_len)
-        return padded_features, masks
+            masks[i, :video_len] = torch.ones(breakfast.N_MSTCN_CLASSES, video_len)
+        if logits is None:
+            return padded_features, masks
+        else:
+            return padded_features, masks, padded_logits
 
     @staticmethod
     def collate_fn(batch):
-        source_features, target_features = zip(*batch)
-        source_features, source_masks = TrainDataset._pad_features(source_features)
+        source_features, target_features, source_logits = zip(*batch)
+        source_features, source_masks, source_logits = TrainDataset._pad_features(source_features, logits=source_logits)
         target_features, target_masks = TrainDataset._pad_features(target_features)
-        return source_features, source_masks, target_features, target_masks
+        return source_features, source_masks, target_features, target_masks, source_logits
 
 
 class TestDataset(TrainDataset):
