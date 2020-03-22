@@ -299,16 +299,16 @@ class TrainDataset(tdata.Dataset):
                                                  source_features.shape[1]],
                                           dtype=np.float32)
         coarse_source_features[:len(source_features), :] = source_features
-        coarse_source_features[source_coarse_label + len(source_features), :] = 1
+        coarse_source_features[source_coarse_logit + len(source_features), :] = 1
 
         coarse_target_features = np.zeros(shape=[len(target_features) + len(breakfast.COARSE_LABELS),
                                                  target_features.shape[1]],
                                           dtype=np.float32)
         coarse_target_features[:len(target_features), :] = target_features
-        coarse_target_features[target_coarse_label + len(source_features), :] = 1
+        coarse_target_features[target_coarse_logit + len(source_features), :] = 1
 
-        source_features = torch.from_numpy(source_features)
-        target_features = torch.from_numpy(target_features)
+        source_features = torch.from_numpy(coarse_source_features)
+        target_features = torch.from_numpy(coarse_target_features)
         source_logits = torch.from_numpy(source_logits)
 
         return source_features, source_logits, source_coarse_logit, target_features, target_coarse_logit
