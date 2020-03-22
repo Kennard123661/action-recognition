@@ -114,7 +114,6 @@ class Trainer:
                 'test': test_acc,
                 'submission': submission_acc
             }
-            exit()
             self.tboard_writer.add_scalars('accuracy', log_dict, self.n_epochs)
 
             if isinstance(self.scheduler, optim.lr_scheduler.StepLR):
