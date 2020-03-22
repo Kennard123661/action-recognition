@@ -109,8 +109,8 @@ class Trainer:
             self.train_step(train_dataset)
             self._save_checkpoint('model-{}'.format(self.n_epochs))
             self._save_checkpoint()  # update the latest model
-            train_acc = self.test_step(train_val_dataset)
             test_acc = self.test_step(test_dataset)
+            train_acc = self.test_step(train_val_dataset)
             submission_acc = self.get_submission_acc(test_dataset)
             print('INFO: at epoch {}, the train accuracy is {} and the test accuracy is {} submission acc is {}'
                   .format(self.n_epochs, train_acc, test_acc, submission_acc))
@@ -360,13 +360,23 @@ class TestDataset(TrainDataset):
 
     def __getitem__(self, idx):
         video_feat_file = self.video_feat_files[idx]
+        coarse_label = os.path.split(video_feat_file)[-1]
+        coarse_label = coarse_label.split('.')[0].split('_')[-1]
+        coarse_logit = breakfast.COARSE_LABELS.index(coarse_label)
+
         features = np.load(video_feat_file)
         logits = self.logits[idx]
         assert features.shape[1] == len(logits)
         features = features[:, ::SAMPLE_RATE]
         logits = np.array(logits)[::SAMPLE_RATE]
 
-        features = torch.from_numpy(features)
+        coarse_features = np.zeros(shape=[len(features) + len(breakfast.COARSE_LABELS),
+                                          features.shape[1]],
+                                   dtype=np.float32)
+        coarse_features[:len(features), :] = features
+        coarse_features[coarse_logit + len(features), :] = 1
+
+        features = torch.from_numpy(coarse_features)
         logits = torch.from_numpy(logits)
         return features, logits
 
