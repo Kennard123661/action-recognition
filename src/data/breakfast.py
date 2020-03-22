@@ -11,6 +11,7 @@ EXTRACTED_DIR = os.path.join(DATASET_DIR, 'extracted')
 
 COARSE_LABELS = ['cereals', 'coffee', 'friedegg', 'juice', 'milk', 'pancake', 'salat', 'sandwich',
                  'scrambledegg', 'tea']
+CAMERAS = ['cam01', 'cam02', 'stereo01', 'webcam01', 'webcam02']
 EXTRACTED_IMAGES_DIR = os.path.join(EXTRACTED_DIR, 'images')
 N_VIDEO_FRAMES_DIR = os.path.join(DATASET_DIR, 'n-video-frames')
 LABEL_DIR = os.path.join(DATASET_DIR, 'labels')
@@ -319,6 +320,13 @@ def _generate_test_segment_gt():
             f.write(str(segment_label) + '\n')
 
 
+def _print_cameras():
+    video_names = os.listdir(VIDEO_DIR)
+    video_names = [name.split('.')[0] for name in video_names]
+    camera_names = [name.split('_')[1] for name in video_names]
+    print(np.unique(camera_names))
+
+
 def _print_coarse_labels():
     video_names = os.listdir(VIDEO_DIR)
     video_names = [name.split('.')[0] for name in video_names]
@@ -331,6 +339,7 @@ if __name__ == '__main__':
     # get_mstcn_data(split='train')
     # _generate_mstcn_segment_labels()
     _print_coarse_labels()
+    _print_cameras()
     # _generate_test_segment_gt()
     # segments = get_submission_segments()
     # print(len(segments))
