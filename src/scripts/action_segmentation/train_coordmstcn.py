@@ -26,15 +26,15 @@ from nets.action_seg import mstcn
 import data.breakfast as breakfast
 from scripts.action_segmentation.create_submission import get_cls_results
 
-CHECKPOINT_DIR = os.path.join(ACTION_SEG_CHECKPOINT_DIR, 'coarse-inputs')
-LOG_DIR = os.path.join(ACTION_SEG_LOG_DIR, 'coarse-inputs')
-CONFIG_DIR = os.path.join(ACTION_SEG_CONFIG_DIR, 'coarse-inputs')
-SUBMISSION_DIR = os.path.join('/mnt/HGST6/cs5242-project/submissions/action-segmentation/coarse-inputs-temp')
+CHECKPOINT_DIR = os.path.join(ACTION_SEG_CHECKPOINT_DIR, 'coord-mstcn')
+LOG_DIR = os.path.join(ACTION_SEG_LOG_DIR, 'coord-mstcn')
+CONFIG_DIR = os.path.join(ACTION_SEG_CONFIG_DIR, 'coord-mstcn')
+SUBMISSION_DIR = os.path.join('/mnt/HGST6/cs5242-project/submissions/action-segmentation/coord-mstcn-temp')
 NUM_WORKERS = 2
 
 N_STAGES = 4
 N_LAYERS = 10
-N_FEATURE_MAPS = 64
+N_FEATURE_MAPS = 128
 IN_CHANNELS = 2048 + len(breakfast.COARSE_LABELS)
 
 # todo change this.
