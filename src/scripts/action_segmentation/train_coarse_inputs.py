@@ -34,7 +34,7 @@ NUM_WORKERS = 2
 
 N_STAGES = 4
 N_LAYERS = 10
-N_FEATURE_MAPS = 64
+N_FEATURE_MAPS = 128
 IN_CHANNELS = 2048 + len(breakfast.COARSE_LABELS)
 
 # todo change this.
