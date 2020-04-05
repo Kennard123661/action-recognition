@@ -5,7 +5,7 @@ pytube3
 torch==1.4
 torchvision
 numpy
-tensorflow==2.1.0
+tensorflow==1.15.0
 tensorboard
 tensorboardX
 matplotlib
