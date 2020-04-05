@@ -438,6 +438,14 @@ class FrameRecDataset(tdata.Dataset):
         return video_frames, labels
 
 
+def get_train_videos():
+    return breakfast.get_split_videonames(split='train')
+
+
+def get_test_videos():
+    return breakfast.get_split_videonames(split='test')
+
+
 dset = FrameRecDataset(videos=os.listdir(breakfast.VIDEO_DIR), frame_stride=2, frame_size=224)
 print(len(dset))
 print(dset.__getitem__(0))
