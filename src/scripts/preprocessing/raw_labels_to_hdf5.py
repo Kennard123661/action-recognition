@@ -36,7 +36,7 @@ def _preprocess_video_labels(dset_name):
     else:
         raise ValueError('no such dataset')
 
-    hdf5_label_dir = dset.HDF5_LABEL_DIR
+    hdf5_label_dir = dset.FRAME_RECOGNITION_LABEL_DIR
     if not os.path.exists(hdf5_label_dir):
         os.makedirs(hdf5_label_dir)
 
