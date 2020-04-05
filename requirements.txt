@@ -15,6 +15,7 @@ p_tqdm
 imageio
 git+https://github.com/google-research/tf-slim
 Pillow
+scikit-learn
 pytorch-metric-learning
 h5py
 scikit-video

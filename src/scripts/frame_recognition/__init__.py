@@ -354,14 +354,14 @@ class ColorJitterVideo:
 
 
 class FrameRecDataset(tdata.Dataset):
-    def __init__(self, videos, frame_size, frame_stride=1, n_classes=48, segment_length=30):
+    def __init__(self, videos, input_size, frame_stride=1, n_classes=48, segment_length=30):
         super(FrameRecDataset, self).__init__()
         assert frame_stride >= 1, 'this should be larger than or equals to 1'
         assert (segment_length % 2) == 0
         self.frame_stride = frame_stride
         self.n_classes = n_classes
         self.segment_length = segment_length
-        self.frame_size = int(frame_size)
+        self.frame_size = int(input_size)
         video_files = [os.path.join(breakfast.VIDEO_DIR, video) for video in videos]
         for file in video_files:
             assert os.path.exists(file)
@@ -392,8 +392,8 @@ class FrameRecDataset(tdata.Dataset):
 
         self.transforms = ComposeVideo([
             ToPilVideo(),
-            RescaleVideo(size=RESCALE_SIZE),
-            CenterCropVideo(size=CROP_SIZE),
+            RescaleVideo(size=input_size),
+            CenterCropVideo(size=input_size),
             ToTensorVideo(),
             NormalizeVideo(mean=INPUT_MEAN, std=INPUT_STD)
         ])
@@ -431,7 +431,7 @@ class FrameRecDataset(tdata.Dataset):
         return video_frames, label
 
     @staticmethod
-    def __collate__fn(batch):
+    def collate_fn(batch):
         video_frames, labels = zip(*batch)
         video_frames = default_collate(video_frames)
         labels = default_collate(labels)
@@ -446,6 +446,6 @@ def get_test_videos():
     return breakfast.get_split_videonames(split='test')
 
 
-dset = FrameRecDataset(videos=os.listdir(breakfast.VIDEO_DIR), frame_stride=2, frame_size=224)
+dset = FrameRecDataset(videos=os.listdir(breakfast.VIDEO_DIR), frame_stride=2, input_size=224)
 print(len(dset))
 print(dset.__getitem__(0))
