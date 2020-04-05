@@ -1,5 +1,12 @@
 # Action Recognition
 
+### Preprocessing Breakfast Dataset
+
+```bash
+python src/processing/extract_video_lengths.py
+```
+
+
 ## Setting Up
 The directories for our codebase is setup as follows:
 ```bash

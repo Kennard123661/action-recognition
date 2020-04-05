@@ -1,5 +1,6 @@
 import os
 import numpy as np
+import h5py
 from data import DATA_DIR
 from tqdm import tqdm
 from PIL import Image
@@ -40,10 +41,18 @@ N_MSTCN_CLASSES = 48
 
 VIDEO_LENGTHS_DIR = os.path.join(DATASET_DIR, 'video-lengths')
 EXTRACTED_FRAMES_DIR = os.path.join(DATASET_DIR, 'extracted-frames')
+HDF5_LABEL_DIR = os.path.join(DATASET_DIR, 'hdf5-labels')
 
 
 TENSOR_MEAN = [0.42384474, 0.39556269, 0.34748514]
 TENSOR_STD = [0.15591848, 0.14713841, 0.13312177]
+
+
+def get_hdf5_label(video_name, frame_idx):
+    hdf5_label_file = os.path.join(HDF5_LABEL_DIR, video_name + '.hdf5')
+    with h5py.File(hdf5_label_file, 'r') as f:
+        label = f['labels'][frame_idx]
+    return label
 
 
 def read_mapping_file():
