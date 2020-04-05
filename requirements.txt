@@ -16,3 +16,5 @@ imageio
 git+https://github.com/google-research/tf-slim
 Pillow
 pytorch-metric-learning
+h5py
+scikit-video

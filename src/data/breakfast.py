@@ -38,6 +38,10 @@ STD_FILE = os.path.join(DATASET_DIR, 'std.npy')
 N_CLASSES = 48
 N_MSTCN_CLASSES = 48
 
+VIDEO_LENGTHS_DIR = os.path.join(DATASET_DIR, 'video-lengths')
+EXTRACTED_FRAMES_DIR = os.path.join(DATASET_DIR, 'extracted-frames')
+
+
 TENSOR_MEAN = [0.42384474, 0.39556269, 0.34748514]
 TENSOR_STD = [0.15591848, 0.14713841, 0.13312177]
 
