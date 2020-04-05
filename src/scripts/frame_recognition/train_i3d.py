@@ -5,15 +5,10 @@ import torch
 import math
 import torch.utils.data as tdata
 import torch.optim as optim
-from torch.utils.data._utils.collate import default_collate
 import numpy as np
-from torchvision.transforms import Compose
-import torchvision.transforms._transforms_video as transforms
 from tqdm import tqdm
 import tensorboardX
 import argparse
-
-R2PLU1D_MODELS = ['r2plus1d_34_32_ig65m', 'r2plus1d_34_32_kinetics', 'r2plus1d_34_8_ig65m', 'r2plus1d_34_8_kinetics']
 
 if __name__ == '__main__':
     import sys
@@ -23,7 +18,6 @@ from scripts.frame_recognition import FRAME_REG_LOG_DIR, FRAME_REG_CHECKPOINT_DI
     FrameRecDataset
 from scripts import set_determinstic_mode
 import data.breakfast as breakfast
-from utils.video_utils import ToTensorVideo, ToZeroOneVideo, ResizeVideo
 from nets.action_reg.i3d import InceptionI3d
 
 CHECKPOINT_DIR = os.path.join(FRAME_REG_CHECKPOINT_DIR, 'i3d')
@@ -114,7 +108,10 @@ class Trainer:
                                       collate_fn=train_dataset.collate_fn, pin_memory=True, num_workers=NUM_WORKERS)
         self.model.train()
         losses = []
+        n_iterations = 0
         for feats, logits in tqdm(dataloader):
+            if n_iterations >= self.n_epoch_iterations:
+                break  # terminate.
             feats = feats.cuda(self.device)
             logits = logits.cuda(self.device)
 
@@ -124,6 +121,7 @@ class Trainer:
             loss.backward()
             self.optimizer.step()
             losses.append(loss.item())
+            n_iterations += 1
         avg_loss = np.mean(losses)
         print('INFO: at epoch {0} loss = {1}'.format(self.n_epochs, avg_loss))
         self.tboard_writer.add_scalar('loss', avg_loss, self.n_epochs)
@@ -140,11 +138,11 @@ class Trainer:
         with torch.no_grad():
             for feats, logits in tqdm(dataloader):
                 feats = feats.cuda(self.device)
-                logits = logits.cuda(self.device)
+                logits = logits.cuda(self.device).int()
 
                 self.optimizer.zero_grad()
                 predictions = self.model(feats)
-                predictions = torch.argmax(predictions, dim=1)
+                predictions = torch.argmax(predictions, dim=1).int()
                 is_correct = torch.eq(predictions, logits)
                 n_correct += torch.sum(is_correct)
                 n_predictions += is_correct.shape[0]

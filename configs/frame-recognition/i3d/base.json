@@ -14,7 +14,7 @@
   "scheduler": "step",
   "lr-step": 10000,
   "lr-decay": 0.1,
-  "n-epoch-iterations": 1000
+  "n-epoch-iterations": 1000,
 
   "input-size": 224,
   "frame-stride": 1,
