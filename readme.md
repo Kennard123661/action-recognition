@@ -4,6 +4,7 @@
 
 ```bash
 python src/processing/extract_video_lengths.py
+python src/processing/raw_labels_to_hdf5.py
 ```
 
 
