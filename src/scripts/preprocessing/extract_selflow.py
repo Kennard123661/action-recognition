@@ -254,8 +254,7 @@ def main():
 
     # get videos that have been processed
     videos = np.setdiff1d(videos, processed_videos).reshape(-1)  # remove videos that are already processed
-    temp_out_dir = os.path.join(selflow_out_dir, 'selflow-temp')
-    video_selflow_dirs = [os.path.join(temp_out_dir, video) for video in videos]
+    video_selflow_dirs = [os.path.join(selflow_out_dir, video) for video in videos]
     video_image_dirs = [os.path.join(extracted_images_dir, video) for video in videos]
     _extract_optical_flow(video_image_dirs, video_selflow_dirs, model_ckpt=ckpt_file, batch_size=1,
                           n_workers=args.n_workers)
