@@ -1,329 +1,319 @@
-import numpy as np
-import torch
 import torch.nn as nn
-import torch.nn.functional as F
+import torch
 
+class BasicConv3d(nn.Module):
+    def __init__(self, in_planes, out_planes, kernel_size, stride, padding=0):
+        super(BasicConv3d, self).__init__()
+        self.conv = nn.Conv3d(in_planes, out_planes, kernel_size=kernel_size, stride=stride, padding=padding,
+                              bias=False)  # verify bias false
 
-class MaxPool3dSamePadding(nn.MaxPool3d):
-
-    def compute_pad(self, dim, s):
-        if s % self.stride[dim] == 0:
-            return max(self.kernel_size[dim] - self.stride[dim], 0)
-        else:
-            return max(self.kernel_size[dim] - (s % self.stride[dim]), 0)
-
-    def forward(self, x):
-        # compute 'same' padding
-        (batch, channel, t, h, w) = x.size()
-        pad_t = self.compute_pad(0, t)
-        pad_h = self.compute_pad(1, h)
-        pad_w = self.compute_pad(2, w)
-
-        pad_t_f = pad_t // 2
-        pad_t_b = pad_t - pad_t_f
-        pad_h_f = pad_h // 2
-        pad_h_b = pad_h - pad_h_f
-        pad_w_f = pad_w // 2
-        pad_w_b = pad_w - pad_w_f
-
-        pad = [pad_w_f, pad_w_b, pad_h_f, pad_h_b, pad_t_f, pad_t_b]
-        x = F.pad(x, pad)
-        return super(MaxPool3dSamePadding, self).forward(x)
-
-
-class Unit3D(nn.Module):
-    def __init__(self, in_channels,
-                 output_channels,
-                 kernel_shape=(1, 1, 1),
-                 stride=(1, 1, 1),
-                 padding=(0, 0, 0),
-                 activation_fn=F.relu,
-                 use_batch_norm=True,
-                 use_bias=False,
-                 name='unit_3d'):
-
-        """Initializes Unit3D module."""
-        super(Unit3D, self).__init__()
-
-        self._output_channels = output_channels
-        self._kernel_shape = kernel_shape
-        self._stride = stride
-        self._use_batch_norm = use_batch_norm
-        self._activation_fn = activation_fn
-        self._use_bias = use_bias
-        self.name = name
-        self.padding = padding
-
-        self.conv3d = nn.Conv3d(in_channels=in_channels,
-                                out_channels=self._output_channels,
-                                kernel_size=self._kernel_shape,
-                                stride=self._stride,
-                                padding=0,
-                                # we always want padding to be 0 here. We will dynamically pad based on input size in forward function
-                                bias=self._use_bias)
-
-        if self._use_batch_norm:
-            self.bn = nn.BatchNorm3d(self._output_channels, eps=0.001, momentum=0.01)
-
-    def compute_pad(self, dim, s):
-        if s % self._stride[dim] == 0:
-            return max(self._kernel_shape[dim] - self._stride[dim], 0)
-        else:
-            return max(self._kernel_shape[dim] - (s % self._stride[dim]), 0)
+        # verify defalt value in sonnet
+        self.bn = nn.BatchNorm3d(out_planes, eps=1e-3, momentum=0.001, affine=True)
+        self.relu = nn.ReLU(inplace=True)
 
     def forward(self, x):
-        # compute 'same' padding
-        (batch, channel, t, h, w) = x.size()
-        pad_t = self.compute_pad(0, t)
-        pad_h = self.compute_pad(1, h)
-        pad_w = self.compute_pad(2, w)
-
-        pad_t_f = pad_t // 2
-        pad_t_b = pad_t - pad_t_f
-        pad_h_f = pad_h // 2
-        pad_h_b = pad_h - pad_h_f
-        pad_w_f = pad_w // 2
-        pad_w_b = pad_w - pad_w_f
-
-        pad = [pad_w_f, pad_w_b, pad_h_f, pad_h_b, pad_t_f, pad_t_b]
-        x = F.pad(x, pad)
-
-        x = self.conv3d(x)
-        if self._use_batch_norm:
-            x = self.bn(x)
-        if self._activation_fn is not None:
-            x = self._activation_fn(x)
+        x = self.conv(x)
+        x = self.bn(x)
+        x = self.relu(x)
         return x
 
 
-class InceptionModule(nn.Module):
-    def __init__(self, in_channels, out_channels, name):
-        super(InceptionModule, self).__init__()
+class Mixed_3b(nn.Module):
+    def __init__(self):
+        super(Mixed_3b, self).__init__()
 
-        self.b0 = Unit3D(in_channels=in_channels, output_channels=out_channels[0], kernel_shape=[1, 1, 1], padding=0,
-                         name=name + '/Branch_0/Conv3d_0a_1x1')
-        self.b1a = Unit3D(in_channels=in_channels, output_channels=out_channels[1], kernel_shape=[1, 1, 1], padding=0,
-                          name=name + '/Branch_1/Conv3d_0a_1x1')
-        self.b1b = Unit3D(in_channels=out_channels[1], output_channels=out_channels[2], kernel_shape=[3, 3, 3],
-                          name=name + '/Branch_1/Conv3d_0b_3x3')
-        self.b2a = Unit3D(in_channels=in_channels, output_channels=out_channels[3], kernel_shape=[1, 1, 1], padding=0,
-                          name=name + '/Branch_2/Conv3d_0a_1x1')
-        self.b2b = Unit3D(in_channels=out_channels[3], output_channels=out_channels[4], kernel_shape=[3, 3, 3],
-                          name=name + '/Branch_2/Conv3d_0b_3x3')
-        self.b3a = MaxPool3dSamePadding(kernel_size=[3, 3, 3],
-                                        stride=(1, 1, 1), padding=0)
-        self.b3b = Unit3D(in_channels=in_channels, output_channels=out_channels[5], kernel_shape=[1, 1, 1], padding=0,
-                          name=name + '/Branch_3/Conv3d_0b_1x1')
-        self.name = name
-
-    def forward(self, x):
-        b0 = self.b0(x)
-        b1 = self.b1b(self.b1a(x))
-        b2 = self.b2b(self.b2a(x))
-        b3 = self.b3b(self.b3a(x))
-        return torch.cat([b0, b1, b2, b3], dim=1)
-
-
-class InceptionI3d(nn.Module):
-    """Inception-v1 I3D architecture.
-    The model is introduced in:
-        Quo Vadis, Action Recognition? A New Model and the Kinetics Dataset
-        Joao Carreira, Andrew Zisserman
-        https://arxiv.org/pdf/1705.07750v1.pdf.
-    See also the Inception architecture, introduced in:
-        Going deeper with convolutions
-        Christian Szegedy, Wei Liu, Yangqing Jia, Pierre Sermanet, Scott Reed,
-        Dragomir Anguelov, Dumitru Erhan, Vincent Vanhoucke, Andrew Rabinovich.
-        http://arxiv.org/pdf/1409.4842v1.pdf.
-    """
-
-    # Endpoints of the model in order. During construction, all the endpoints up
-    # to a designated `final_endpoint` are returned in a dictionary as the
-    # second return value.
-    VALID_ENDPOINTS = (
-        'Conv3d_1a_7x7',
-        'MaxPool3d_2a_3x3',
-        'Conv3d_2b_1x1',
-        'Conv3d_2c_3x3',
-        'MaxPool3d_3a_3x3',
-        'Mixed_3b',
-        'Mixed_3c',
-        'MaxPool3d_4a_3x3',
-        'Mixed_4b',
-        'Mixed_4c',
-        'Mixed_4d',
-        'Mixed_4e',
-        'Mixed_4f',
-        'MaxPool3d_5a_2x2',
-        'Mixed_5b',
-        'Mixed_5c',
-        'Logits',
-        'Predictions',
-    )
-
-    def __init__(self, num_classes=400, spatial_squeeze=True,
-                 final_endpoint='Logits', name='inception_i3d', in_channels=3, dropout_keep_prob=0.5):
-        """Initializes I3D model instance.
-        Args:
-          num_classes: The number of outputs in the logit layer (default 400, which
-              matches the Kinetics dataset).
-          spatial_squeeze: Whether to squeeze the spatial dimensions for the logits
-              before returning (default True).
-          final_endpoint: The model contains many possible endpoints.
-              `final_endpoint` specifies the last endpoint for the model to be built
-              up to. In addition to the output at `final_endpoint`, all the outputs
-              at endpoints up to `final_endpoint` will also be returned, in a
-              dictionary. `final_endpoint` must be one of
-              InceptionI3d.VALID_ENDPOINTS (default 'Logits').
-          name: A string (optional). The name of this module.
-        Raises:
-          ValueError: if `final_endpoint` is not recognized.
-        """
-
-        if final_endpoint not in self.VALID_ENDPOINTS:
-            raise ValueError('Unknown final endpoint %s' % final_endpoint)
-
-        super(InceptionI3d, self).__init__()
-        self._num_classes = num_classes
-        self._spatial_squeeze = spatial_squeeze
-        self._final_endpoint = final_endpoint
-        self.logits = None
-
-        if self._final_endpoint not in self.VALID_ENDPOINTS:
-            raise ValueError('Unknown final endpoint %s' % self._final_endpoint)
-
-        self.end_points = {}
-        end_point = 'Conv3d_1a_7x7'
-        self.end_points[end_point] = Unit3D(in_channels=in_channels, output_channels=64, kernel_shape=[7, 7, 7],
-                                            stride=(2, 2, 2), padding=(3, 3, 3), name=name + end_point)
-        if self._final_endpoint == end_point:
-            return
-
-        end_point = 'MaxPool3d_2a_3x3'
-        self.end_points[end_point] = MaxPool3dSamePadding(kernel_size=[1, 3, 3], stride=(1, 2, 2),
-                                                          padding=0)
-        if self._final_endpoint == end_point:
-            return
-
-        end_point = 'Conv3d_2b_1x1'
-        self.end_points[end_point] = Unit3D(in_channels=64, output_channels=64, kernel_shape=[1, 1, 1], padding=0,
-                                            name=name + end_point)
-        if self._final_endpoint == end_point:
-            return
-
-        end_point = 'Conv3d_2c_3x3'
-        self.end_points[end_point] = Unit3D(in_channels=64, output_channels=192, kernel_shape=[3, 3, 3], padding=1,
-                                            name=name + end_point)
-        if self._final_endpoint == end_point:
-            return
-
-        end_point = 'MaxPool3d_3a_3x3'
-        self.end_points[end_point] = MaxPool3dSamePadding(kernel_size=[1, 3, 3], stride=(1, 2, 2),
-                                                          padding=0)
-        if self._final_endpoint == end_point:
-            return
-
-        end_point = 'Mixed_3b'
-        self.end_points[end_point] = InceptionModule(192, [64, 96, 128, 16, 32, 32], name + end_point)
-        if self._final_endpoint == end_point:
-            return
-
-        end_point = 'Mixed_3c'
-        self.end_points[end_point] = InceptionModule(256, [128, 128, 192, 32, 96, 64], name + end_point)
-        if self._final_endpoint == end_point:
-            return
-
-        end_point = 'MaxPool3d_4a_3x3'
-        self.end_points[end_point] = MaxPool3dSamePadding(kernel_size=[3, 3, 3], stride=(2, 2, 2),
-                                                          padding=0)
-        if self._final_endpoint == end_point:
-            return
-
-        end_point = 'Mixed_4b'
-        self.end_points[end_point] = InceptionModule(128 + 192 + 96 + 64, [192, 96, 208, 16, 48, 64], name + end_point)
-        if self._final_endpoint == end_point:
-            return
-
-        end_point = 'Mixed_4c'
-        self.end_points[end_point] = InceptionModule(192 + 208 + 48 + 64, [160, 112, 224, 24, 64, 64], name + end_point)
-        if self._final_endpoint == end_point:
-            return
-
-        end_point = 'Mixed_4d'
-        self.end_points[end_point] = InceptionModule(160 + 224 + 64 + 64, [128, 128, 256, 24, 64, 64], name + end_point)
-        if self._final_endpoint == end_point:
-            return
-
-        end_point = 'Mixed_4e'
-        self.end_points[end_point] = InceptionModule(128 + 256 + 64 + 64, [112, 144, 288, 32, 64, 64], name + end_point)
-        if self._final_endpoint == end_point:
-            return
-
-        end_point = 'Mixed_4f'
-        self.end_points[end_point] = InceptionModule(112 + 288 + 64 + 64, [256, 160, 320, 32, 128, 128],
-                                                     name + end_point)
-        if self._final_endpoint == end_point:
-            return
-
-        end_point = 'MaxPool3d_5a_2x2'
-        self.end_points[end_point] = MaxPool3dSamePadding(kernel_size=[2, 2, 2], stride=(2, 2, 2),
-                                                          padding=0)
-        if self._final_endpoint == end_point:
-            return
-
-        end_point = 'Mixed_5b'
-        self.end_points[end_point] = InceptionModule(256 + 320 + 128 + 128, [256, 160, 320, 32, 128, 128],
-                                                     name + end_point)
-        if self._final_endpoint == end_point:
-            return
-
-        end_point = 'Mixed_5c'
-        self.end_points[end_point] = InceptionModule(256 + 320 + 128 + 128, [384, 192, 384, 48, 128, 128],
-                                                     name + end_point)
-        if self._final_endpoint == end_point:
-            return
-
-        end_point = 'Logits'
-        self.avg_pool = nn.AvgPool3d(kernel_size=[2, 7, 7],
-                                     stride=(1, 1, 1))
-        self.dropout = nn.Dropout(dropout_keep_prob)
-        self.logits = Unit3D(in_channels=384 + 384 + 128 + 128, output_channels=self._num_classes,
-                             kernel_shape=[1, 1, 1],
-                             padding=0,
-                             activation_fn=None,
-                             use_batch_norm=False,
-                             use_bias=True,
-                             name='logits')
-
-        self.build()
-
-    def replace_logits(self, num_classes):
-        self._num_classes = num_classes
-        self.logits = Unit3D(in_channels=384 + 384 + 128 + 128, output_channels=self._num_classes,
-                             kernel_shape=[1, 1, 1],
-                             padding=0,
-                             activation_fn=None,
-                             use_batch_norm=False,
-                             use_bias=True,
-                             name='logits')
-
-    def build(self):
-        for k in self.end_points.keys():
-            self.add_module(k, self.end_points[k])
+        self.branch0 = nn.Sequential(
+            BasicConv3d(192, 64, kernel_size=1, stride=1),
+        )
+        self.branch1 = nn.Sequential(
+            BasicConv3d(192, 96, kernel_size=1, stride=1),
+            BasicConv3d(96, 128, kernel_size=3, stride=1, padding=1),
+        )
+        self.branch2 = nn.Sequential(
+            BasicConv3d(192, 16, kernel_size=1, stride=1),
+            BasicConv3d(16, 32, kernel_size=3, stride=1, padding=1),
+        )
+        self.branch3 = nn.Sequential(
+            nn.MaxPool3d(kernel_size=(3, 3, 3), stride=1, padding=1),
+            BasicConv3d(192, 32, kernel_size=1, stride=1),
+        )
 
     def forward(self, x):
-        for end_point in self.VALID_ENDPOINTS:
-            if end_point in self.end_points:
-                x = self._modules[end_point](x)  # use _modules to work with dataparallel
+        x0 = self.branch0(x)
+        x1 = self.branch1(x)
+        x2 = self.branch2(x)
+        x3 = self.branch3(x)
+        out = torch.cat((x0, x1, x2, x3), 1)
 
-        x = self.logits(self.dropout(self.avg_pool(x)))
-        if self._spatial_squeeze:
-            logits = x.squeeze(3).squeeze(3)
-        # logits is batch X time X classes, which is what we want to work with
-        return logits
+        return out
 
-    def extract_features(self, x):
-        for end_point in self.VALID_ENDPOINTS:
-            if end_point in self.end_points:
-                x = self._modules[end_point](x)
-        return self.avg_pool(x)
+
+class Mixed_3c(nn.Module):
+    def __init__(self):
+        super(Mixed_3c, self).__init__()
+        self.branch0 = nn.Sequential(
+            BasicConv3d(256, 128, kernel_size=1, stride=1),
+        )
+        self.branch1 = nn.Sequential(
+            BasicConv3d(256, 128, kernel_size=1, stride=1),
+            BasicConv3d(128, 192, kernel_size=3, stride=1, padding=1),
+        )
+        self.branch2 = nn.Sequential(
+            BasicConv3d(256, 32, kernel_size=1, stride=1),
+            BasicConv3d(32, 96, kernel_size=3, stride=1, padding=1),
+        )
+        self.branch3 = nn.Sequential(
+            nn.MaxPool3d(kernel_size=(3, 3, 3), stride=1, padding=1),
+            BasicConv3d(256, 64, kernel_size=1, stride=1),
+        )
+
+    def forward(self, x):
+        x0 = self.branch0(x)
+        x1 = self.branch1(x)
+        x2 = self.branch2(x)
+        x3 = self.branch3(x)
+        out = torch.cat((x0, x1, x2, x3), 1)
+        return out
+
+
+class Mixed_4b(nn.Module):
+    def __init__(self):
+        super(Mixed_4b, self).__init__()
+
+        self.branch0 = nn.Sequential(
+            BasicConv3d(480, 192, kernel_size=1, stride=1),
+        )
+        self.branch1 = nn.Sequential(
+            BasicConv3d(480, 96, kernel_size=1, stride=1),
+            BasicConv3d(96, 208, kernel_size=3, stride=1, padding=1),
+        )
+        self.branch2 = nn.Sequential(
+            BasicConv3d(480, 16, kernel_size=1, stride=1),
+            BasicConv3d(16, 48, kernel_size=3, stride=1, padding=1),
+        )
+        self.branch3 = nn.Sequential(
+            nn.MaxPool3d(kernel_size=(3, 3, 3), stride=1, padding=1),
+            BasicConv3d(480, 64, kernel_size=1, stride=1),
+        )
+
+    def forward(self, x):
+        x0 = self.branch0(x)
+        x1 = self.branch1(x)
+        x2 = self.branch2(x)
+        x3 = self.branch3(x)
+        out = torch.cat((x0, x1, x2, x3), 1)
+        return out
+
+
+class Mixed_4c(nn.Module):
+    def __init__(self):
+        super(Mixed_4c, self).__init__()
+
+        self.branch0 = nn.Sequential(
+            BasicConv3d(512, 160, kernel_size=1, stride=1),
+        )
+        self.branch1 = nn.Sequential(
+            BasicConv3d(512, 112, kernel_size=1, stride=1),
+            BasicConv3d(112, 224, kernel_size=3, stride=1, padding=1),
+        )
+        self.branch2 = nn.Sequential(
+            BasicConv3d(512, 24, kernel_size=1, stride=1),
+            BasicConv3d(24, 64, kernel_size=3, stride=1, padding=1),
+        )
+        self.branch3 = nn.Sequential(
+            nn.MaxPool3d(kernel_size=(3, 3, 3), stride=1, padding=1),
+            BasicConv3d(512, 64, kernel_size=1, stride=1),
+        )
+
+    def forward(self, x):
+        x0 = self.branch0(x)
+        x1 = self.branch1(x)
+        x2 = self.branch2(x)
+        x3 = self.branch3(x)
+        out = torch.cat((x0, x1, x2, x3), 1)
+        return out
+
+
+class Mixed_4d(nn.Module):
+    def __init__(self):
+        super(Mixed_4d, self).__init__()
+
+        self.branch0 = nn.Sequential(
+            BasicConv3d(512, 128, kernel_size=1, stride=1),
+        )
+        self.branch1 = nn.Sequential(
+            BasicConv3d(512, 128, kernel_size=1, stride=1),
+            BasicConv3d(128, 256, kernel_size=3, stride=1, padding=1),
+        )
+        self.branch2 = nn.Sequential(
+            BasicConv3d(512, 24, kernel_size=1, stride=1),
+            BasicConv3d(24, 64, kernel_size=3, stride=1, padding=1),
+        )
+        self.branch3 = nn.Sequential(
+            nn.MaxPool3d(kernel_size=(3, 3, 3), stride=1, padding=1),
+            BasicConv3d(512, 64, kernel_size=1, stride=1),
+        )
+
+    def forward(self, x):
+        x0 = self.branch0(x)
+        x1 = self.branch1(x)
+        x2 = self.branch2(x)
+        x3 = self.branch3(x)
+        out = torch.cat((x0, x1, x2, x3), 1)
+        return out
+
+
+class Mixed_4e(nn.Module):
+    def __init__(self):
+        super(Mixed_4e, self).__init__()
+
+        self.branch0 = nn.Sequential(
+            BasicConv3d(512, 112, kernel_size=1, stride=1),
+        )
+        self.branch1 = nn.Sequential(
+            BasicConv3d(512, 144, kernel_size=1, stride=1),
+            BasicConv3d(144, 288, kernel_size=3, stride=1, padding=1),
+        )
+        self.branch2 = nn.Sequential(
+            BasicConv3d(512, 32, kernel_size=1, stride=1),
+            BasicConv3d(32, 64, kernel_size=3, stride=1, padding=1),
+        )
+        self.branch3 = nn.Sequential(
+            nn.MaxPool3d(kernel_size=(3, 3, 3), stride=1, padding=1),
+            BasicConv3d(512, 64, kernel_size=1, stride=1),
+        )
+
+    def forward(self, x):
+        x0 = self.branch0(x)
+        x1 = self.branch1(x)
+        x2 = self.branch2(x)
+        x3 = self.branch3(x)
+        out = torch.cat((x0, x1, x2, x3), 1)
+        return out
+
+
+class Mixed_4f(nn.Module):
+    def __init__(self):
+        super(Mixed_4f, self).__init__()
+
+        self.branch0 = nn.Sequential(
+            BasicConv3d(528, 256, kernel_size=1, stride=1),
+        )
+        self.branch1 = nn.Sequential(
+            BasicConv3d(528, 160, kernel_size=1, stride=1),
+            BasicConv3d(160, 320, kernel_size=3, stride=1, padding=1),
+        )
+        self.branch2 = nn.Sequential(
+            BasicConv3d(528, 32, kernel_size=1, stride=1),
+            BasicConv3d(32, 128, kernel_size=3, stride=1, padding=1),
+        )
+        self.branch3 = nn.Sequential(
+            nn.MaxPool3d(kernel_size=(3, 3, 3), stride=1, padding=1),
+            BasicConv3d(528, 128, kernel_size=1, stride=1),
+        )
+
+    def forward(self, x):
+        x0 = self.branch0(x)
+        x1 = self.branch1(x)
+        x2 = self.branch2(x)
+        x3 = self.branch3(x)
+        out = torch.cat((x0, x1, x2, x3), 1)
+        return out
+
+
+class Mixed_5b(nn.Module):
+    def __init__(self):
+        super(Mixed_5b, self).__init__()
+
+        self.branch0 = nn.Sequential(
+            BasicConv3d(832, 256, kernel_size=1, stride=1),
+        )
+        self.branch1 = nn.Sequential(
+            BasicConv3d(832, 160, kernel_size=1, stride=1),
+            BasicConv3d(160, 320, kernel_size=3, stride=1, padding=1),
+        )
+        self.branch2 = nn.Sequential(
+            BasicConv3d(832, 32, kernel_size=1, stride=1),
+            BasicConv3d(32, 128, kernel_size=3, stride=1, padding=1),
+        )
+        self.branch3 = nn.Sequential(
+            nn.MaxPool3d(kernel_size=(3, 3, 3), stride=1, padding=1),
+            BasicConv3d(832, 128, kernel_size=1, stride=1),
+        )
+
+    def forward(self, x):
+        x0 = self.branch0(x)
+        x1 = self.branch1(x)
+        x2 = self.branch2(x)
+        x3 = self.branch3(x)
+        out = torch.cat((x0, x1, x2, x3), 1)
+        return out
+
+
+class Mixed_5c(nn.Module):
+    def __init__(self):
+        super(Mixed_5c, self).__init__()
+
+        self.branch0 = nn.Sequential(
+            BasicConv3d(832, 384, kernel_size=1, stride=1),
+        )
+        self.branch1 = nn.Sequential(
+            BasicConv3d(832, 192, kernel_size=1, stride=1),
+            BasicConv3d(192, 384, kernel_size=3, stride=1, padding=1),
+        )
+        self.branch2 = nn.Sequential(
+            BasicConv3d(832, 48, kernel_size=1, stride=1),
+            BasicConv3d(48, 128, kernel_size=3, stride=1, padding=1),
+        )
+        self.branch3 = nn.Sequential(
+            nn.MaxPool3d(kernel_size=(3, 3, 3), stride=1, padding=1),
+            BasicConv3d(832, 128, kernel_size=1, stride=1),
+        )
+
+    def forward(self, x):
+        x0 = self.branch0(x)
+        x1 = self.branch1(x)
+        x2 = self.branch2(x)
+        x3 = self.branch3(x)
+        out = torch.cat((x0, x1, x2, x3), 1)
+        return out
+
+
+class I3D(nn.Module):
+    def __init__(self, num_classes=400, dropout_drop_prob = 0.5, input_channel = 3, spatial_squeeze=True):
+        super(I3D, self).__init__()
+        self.features = nn.Sequential(
+            BasicConv3d(input_channel, 64, kernel_size=7, stride=2, padding=3), # (64, 32, 112, 112)
+            nn.MaxPool3d(kernel_size=(1,3,3), stride=(1,2,2), padding=(0,1,1)),  # (64, 32, 56, 56)
+            BasicConv3d(64, 64, kernel_size=1, stride=1), # (64, 32, 56, 56)
+            BasicConv3d(64, 192, kernel_size=3, stride=1, padding=1),  # (192, 32, 56, 56)
+            nn.MaxPool3d(kernel_size=(1,3,3), stride=(1,2,2), padding=(0,1,1)),  # (192, 32, 28, 28)
+            Mixed_3b(), # (256, 32, 28, 28)
+            Mixed_3c(), # (480, 32, 28, 28)
+            nn.MaxPool3d(kernel_size=(3, 3, 3), stride=(2, 2, 2), padding=(1, 1, 1)), # (480, 16, 14, 14)
+            Mixed_4b(),# (512, 16, 14, 14)
+            Mixed_4c(),# (512, 16, 14, 14)
+            Mixed_4d(),# (512, 16, 14, 14)
+            Mixed_4e(),# (528, 16, 14, 14)
+            Mixed_4f(),# (832, 16, 14, 14)
+            nn.MaxPool3d(kernel_size=(2, 2, 2), stride=(2, 2, 2), padding=(0, 0, 0)), # (832, 8, 7, 7)
+            Mixed_5b(), # (832, 8, 7, 7)
+            Mixed_5c(), # (1024, 8, 7, 7)
+            nn.AvgPool3d(kernel_size=(2, 7, 7), stride=1),# (1024, 8, 1, 1)
+            nn.Dropout3d(dropout_drop_prob),
+            nn.Conv3d(1024, num_classes, kernel_size=1, stride=1, bias=True),# (400, 8, 1, 1)
+        )
+        self.spatial_squeeze = spatial_squeeze
+        self.softmax = nn.Softmax()
+
+    def forward(self, x):
+        logits = self.features(x)
+
+        if self.spatial_squeeze:
+            logits = logits.squeeze(3)
+            logits = logits.squeeze(3)
+
+        averaged_logits = torch.mean(logits, 2)
+        predictions = self.softmax(averaged_logits)
+
+        return predictions, averaged_logits

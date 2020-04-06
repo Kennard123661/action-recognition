@@ -18,7 +18,7 @@ from scripts.frame_recognition import FRAME_REG_LOG_DIR, FRAME_REG_CHECKPOINT_DI
     FrameRecDataset, get_train_videos, get_test_videos
 from scripts import set_determinstic_mode
 import data.breakfast as breakfast
-from nets.action_reg.i3d import InceptionI3d
+from nets.action_reg.i3d import I3D
 
 CHECKPOINT_DIR = os.path.join(FRAME_REG_CHECKPOINT_DIR, 'i3d')
 LOG_DIR = os.path.join(FRAME_REG_LOG_DIR, 'i3d')
@@ -51,7 +51,7 @@ class Trainer:
             os.makedirs(self.checkpoint_dir)
 
         self.segment_length = configs['segment-length']
-        self.model = InceptionI3d(num_classes=breakfast.N_CLASSES)
+        self.model = I3D(num_classes=breakfast.N_CLASSES)
         self.model = self.model.cuda(self.device)
         self.loss_fn = nn.CrossEntropyLoss().cuda(self.device)
         if configs['optim'] == 'adam':
@@ -105,7 +105,7 @@ class Trainer:
     def train_step(self, train_dataset):
         print('INFO: training at epoch {}'.format(self.n_epochs))
         dataloader = tdata.DataLoader(train_dataset, shuffle=True, batch_size=self.train_batch_size, drop_last=True,
-                                      collate_fn=train_dataset.collate_fn, pin_memory=True, num_workers=NUM_WORKERS)
+                                      collate_fn=train_dataset.collate_fn, pin_memory=False, num_workers=NUM_WORKERS)
         self.model.train()
         losses = []
         n_iterations = 0
@@ -116,7 +116,7 @@ class Trainer:
             logits = logits.cuda(self.device)
 
             self.optimizer.zero_grad()
-            feats = self.model(feats)
+            _, feats = self.model(feats)
             loss = self.loss_fn(feats, logits)
             loss.backward()
             self.optimizer.step()
@@ -131,7 +131,7 @@ class Trainer:
 
     def test_step(self, test_dataset):
         dataloader = tdata.DataLoader(test_dataset, shuffle=False, batch_size=self.test_batch_size,
-                                      collate_fn=test_dataset.collate_fn, pin_memory=True, num_workers=NUM_WORKERS)
+                                      collate_fn=test_dataset.collate_fn, pin_memory=False, num_workers=NUM_WORKERS)
         self.model.eval()
         n_correct = 0
         n_predictions = 0
@@ -141,7 +141,7 @@ class Trainer:
                 logits = logits.cuda(self.device).int()
 
                 self.optimizer.zero_grad()
-                predictions = self.model(feats)
+                predictions, _ = self.model(feats)
                 predictions = torch.argmax(predictions, dim=1).int()
                 is_correct = torch.eq(predictions, logits)
                 n_correct += torch.sum(is_correct)
