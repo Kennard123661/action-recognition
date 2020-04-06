@@ -1,6 +1,6 @@
 {
-  "test-batch-size": 40,
-  "train-batch-size": 40,
+  "test-batch-size": 8,
+  "train-batch-size": 8,
 
   "max-epochs": 100,
   "optim": "adam",
