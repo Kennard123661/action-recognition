@@ -15,7 +15,7 @@ if __name__ == '__main__':
     sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from scripts.frame_recognition import FRAME_REG_LOG_DIR, FRAME_REG_CHECKPOINT_DIR, FRAME_REG_CONFIG_DIR, \
-    FrameRecDataset
+    FrameRecDataset, get_train_videos, get_test_videos
 from scripts import set_determinstic_mode
 import data.breakfast as breakfast
 from nets.action_reg.i3d import InceptionI3d
@@ -206,9 +206,9 @@ def main():
     set_determinstic_mode()
     args = _parse_args()
     trainer = Trainer(args.config, args.device)
-    train_data = _parse_split_data('train')
-    test_data = _parse_split_data('test')
-    trainer.train(train_data, test_data)
+    train_videos = get_train_videos()
+    test_videos = get_test_videos()
+    trainer.train(train_videos, test_videos)
 
 
 if __name__ == '__main__':

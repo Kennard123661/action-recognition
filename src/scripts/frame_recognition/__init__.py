@@ -373,7 +373,7 @@ class FrameRecDataset(tdata.Dataset):
         self.frame_idxs = []
         self.video_files = []
         self.labels = []
-        self.video_lengths = video_lengths
+        self.video_lengths = []
         for i, video_file in enumerate(video_files):
             video_length = video_lengths[i]
             video_label_file = video_label_files[i]
@@ -382,7 +382,7 @@ class FrameRecDataset(tdata.Dataset):
             video_labels = [action_to_logit_dict[label.decode('utf8')] for label in video_labels]
             for j in range(video_length):
                 if j >= len(video_labels):
-                    continue
+                    break
                 label = video_labels[j]
                 if label < n_classes:
                     self.video_files.append(video_file)
@@ -406,13 +406,15 @@ class FrameRecDataset(tdata.Dataset):
         frame_idx = self.frame_idxs[idx]
         label = self.labels[idx]
         video_length = self.video_lengths[idx]
-
         left_idxs = np.sort(frame_idx - (np.arange(0, self.segment_length // 2) + 1) * self.frame_stride)
         right_idxs = np.sort(frame_idx + (np.arange(0, self.segment_length // 2) + 1) * self.frame_stride)
         idxs = np.concatenate([left_idxs, [frame_idx], right_idxs], axis=0)
 
         start_idx = np.argwhere(idxs >= 0).reshape(-1)[0]
-        end_idx = np.argwhere(idxs < video_length).reshape(-1)[-1]
+        if idxs[-1] >= video_length:
+            end_idx = np.argwhere(idxs < video_length).reshape(-1)[-1]
+        else:
+            end_idx = len(idxs) - 1
         sample_idxs = idxs[start_idx:end_idx+1]
         assert len(sample_idxs) > 0, 'there are zero frames to sample...'
 
@@ -439,13 +441,16 @@ class FrameRecDataset(tdata.Dataset):
 
 
 def get_train_videos():
-    return breakfast.get_split_videonames(split='train')
+    video_names = breakfast.get_split_videonames(split='train')
+    video_names = [video_name + '.avi' for video_name in video_names]
+    for video_name in video_names:
+        assert os.path.exists(os.path.join(breakfast.VIDEO_DIR, video_name))
+    return video_names
 
 
 def get_test_videos():
-    return breakfast.get_split_videonames(split='test')
-
-
-dset = FrameRecDataset(videos=os.listdir(breakfast.VIDEO_DIR), frame_stride=2, input_size=224)
-print(len(dset))
-print(dset.__getitem__(0))
+    video_names = breakfast.get_split_videonames(split='test')
+    video_names = [video_name + '.avi' for video_name in video_names]
+    for video_name in video_names:
+        assert os.path.exists(os.path.join(breakfast.VIDEO_DIR, video_name))
+    return video_names
