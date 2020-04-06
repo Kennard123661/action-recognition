@@ -7,6 +7,17 @@ python src/processing/extract_video_lengths.py
 python src/processing/raw_labels_to_hdf5.py
 ```
 
+### Notify Utilities
+Get telegram to notif you. First communicate with botfather and create your bot using `/newbot` command. 
+Update the bot token in `utils/notify_utils.py` and visit the following URL for the chat id 
+after sending one message to your bot.
+
+```
+https://api.telegram.org/bot<TOKEN>/getUpdates
+```
+
+Update the chat-id inside `utils/notify_utils.py` as well.
+
 
 ## Setting Up
 The directories for our codebase is setup as follows:
