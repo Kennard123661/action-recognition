@@ -9,6 +9,7 @@ import numpy as np
 from tqdm import tqdm
 import tensorboardX
 import argparse
+from utils.notify_utils import telegram_watch
 
 if __name__ == '__main__':
     import sys
@@ -202,6 +203,7 @@ def _parse_split_data(split):
     return [valid_segments, valid_labels, valid_logits]
 
 
+@telegram_watch
 def main():
     set_determinstic_mode()
     args = _parse_args()
