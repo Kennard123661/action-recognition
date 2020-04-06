@@ -7,6 +7,13 @@ python src/processing/extract_video_lengths.py
 python src/processing/raw_labels_to_hdf5.py
 ```
 
+### Notify Utilities
+Get telegram to notif you. First communicate with botfather and create your bot using `/newbot` command.
+
+```
+
+```
+
 
 ## Setting Up
 The directories for our codebase is setup as follows:
