@@ -2,13 +2,9 @@ import torch.nn as nn
 import os
 import json
 import torch
-import math
 import torch.utils.data as tdata
 import torch.optim as optim
-from torch.utils.data._utils.collate import default_collate
 import numpy as np
-from torchvision.transforms import Compose
-import torchvision.transforms._transforms_video as transforms
 from tqdm import tqdm
 import tensorboardX
 import argparse
