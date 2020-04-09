@@ -325,6 +325,7 @@ def _parse_args():
     return argparser.parse_args()
 
 
+@telegram_watch
 def main():
     set_determinstic_mode(seed=1538574472)
     args = _parse_args()
