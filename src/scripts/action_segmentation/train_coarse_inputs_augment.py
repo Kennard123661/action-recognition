@@ -14,7 +14,7 @@ if __name__ == '__main__':
     import sys
     sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 from config import ROOT_DIR
-from utils.notify_utils import telegram_watch
+from utils.notify_utils import telegram_watch, send_telegram_notification
 from scripts.action_segmentation import ACTION_SEG_CONFIG_DIR, ACTION_SEG_CHECKPOINT_DIR, ACTION_SEG_LOG_DIR
 from scripts import set_determinstic_mode
 from nets.action_seg import mstcn
@@ -94,17 +94,22 @@ class Trainer:
         train_val_dataset = TestDataset(train_segments, train_labels, train_logits)
 
         start_epoch = self.n_epochs
+        max_submission_acc = 0
         for epoch in range(start_epoch, self.max_epochs):
             self.n_epochs += 1
-            submission_acc = self.get_submission_acc(test_dataset)
-            exit()
             self.train_step(train_dataset)
             self._save_checkpoint('model-{}'.format(self.n_epochs))
             self._save_checkpoint()  # update the latest model
             train_acc = self.test_step(train_val_dataset)
             test_acc = self.test_step(test_dataset)
-            print('INFO: at epoch {}, the train accuracy is {} and the test accuracy is {} submission acc is {}'
-                  .format(self.n_epochs, train_acc, test_acc, submission_acc))
+            submission_acc = self.get_submission_acc(test_dataset)
+            result_str = 'INFO: at epoch {}, the train accuracy is {} and the test accuracy is {} submission acc is {}'\
+                .format(self.n_epochs, train_acc, test_acc, submission_acc)
+            print(result_str)
+            if submission_acc > max_submission_acc:
+                max_submission_acc = submission_acc
+                send_telegram_notification(result_str)
+
             log_dict = {
                 'train': train_acc,
                 'test': test_acc,
