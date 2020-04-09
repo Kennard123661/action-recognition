@@ -14,6 +14,7 @@ if __name__ == '__main__':
     import sys
     sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
+from utils.notify_utils import telegram_watch
 from scripts.action_segmentation import ACTION_SEG_CONFIG_DIR, ACTION_SEG_CHECKPOINT_DIR, ACTION_SEG_LOG_DIR
 from scripts import set_determinstic_mode
 from nets.action_seg import mstcn
@@ -322,6 +323,7 @@ def _parse_args():
     return argparser.parse_args()
 
 
+@telegram_watch
 def main():
     set_determinstic_mode(seed=1538574472)
     args = _parse_args()
