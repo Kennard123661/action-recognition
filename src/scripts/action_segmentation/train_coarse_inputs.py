@@ -25,11 +25,13 @@ from scripts import set_determinstic_mode
 from nets.action_seg import mstcn
 import data.breakfast as breakfast
 from scripts.action_segmentation.create_submission import get_cls_results
+from config import ROOT_DIR
+from utils.notify_utils import telegram_watch, send_telegram_notification
 
 CHECKPOINT_DIR = os.path.join(ACTION_SEG_CHECKPOINT_DIR, 'coarse-inputs')
 LOG_DIR = os.path.join(ACTION_SEG_LOG_DIR, 'coarse-inputs')
 CONFIG_DIR = os.path.join(ACTION_SEG_CONFIG_DIR, 'coarse-inputs')
-SUBMISSION_DIR = os.path.join('/mnt/HGST6/cs5242-project/submissions/action-segmentation/coarse-inputs-temp')
+SUBMISSION_DIR = os.path.join(ROOT_DIR, 'submissions/action-segmentation/coarse-inputs-augment')
 NUM_WORKERS = 2
 
 N_STAGES = 4
@@ -99,6 +101,7 @@ class Trainer:
         train_val_dataset = TestDataset(train_segments, train_labels, train_logits)
 
         start_epoch = self.n_epochs
+        max_acc = 0
         for epoch in range(start_epoch, self.max_epochs):
             self.n_epochs += 1
             self.train_step(train_dataset)
@@ -107,8 +110,12 @@ class Trainer:
             train_acc = self.test_step(train_val_dataset)
             test_acc = self.test_step(test_dataset)
             submission_acc = self.get_submission_acc(test_dataset)
-            print('INFO: at epoch {}, the train accuracy is {} and the test accuracy is {} submission acc is {}'
-                  .format(self.n_epochs, train_acc, test_acc, submission_acc))
+            result_str = 'INFO: at epoch {}, the train accuracy is {} and the test accuracy is {} submission acc is {}'\
+                .format(self.n_epochs, train_acc, test_acc, submission_acc)
+            print(result_str)
+            if submission_acc > max_acc:
+                max_acc = submission_acc
+                send_telegram_notification(result_str + '\n' + 'from train-coarse-inputs:' + self.experiment)
             log_dict = {
                 'train': train_acc,
                 'test': test_acc,
