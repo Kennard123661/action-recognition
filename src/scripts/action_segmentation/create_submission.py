@@ -23,7 +23,7 @@ def _parse_args():
     return argparser.parse_args()
 
 
-def get_cls_results(frame_level_predictions, submission_dir):
+def get_cls_results(frame_level_predictions, submission_dir, postprocess='midpoint'):
     submission_feats, _, _ = breakfast.get_mstcn_data(split='test')
     frame_prediction_dir = os.path.join(submission_dir, 'frame-level-predictions')
     if not os.path.exists(frame_prediction_dir):
@@ -52,12 +52,19 @@ def get_cls_results(frame_level_predictions, submission_dir):
         for j in range(n_timestamps - 1):
             start = video_timestamps[j]
             end = video_timestamps[j + 1]
-            # vid_len = end - start
-            # segment_frame_predictions = video_frame_predictions[start:end]
-            # counts = np.bincount(segment_frame_predictions)
-            #
-            # segment_prediction = np.argmax(counts).item()
-            segment_prediction = video_frame_predictions[(start + end) // 2]
+            vid_len = end - start
+            assert vid_len > 0
+
+            if postprocess == 'maxcount':
+                segment_frame_predictions = video_frame_predictions[start:end]
+                counts = np.bincount(segment_frame_predictions)
+
+                segment_prediction = np.argmax(counts).item()
+            elif postprocess == 'midpoint':
+                segment_prediction = video_frame_predictions[(start + end) // 2]
+            else:
+                raise ValueError('no such postprocess...')
+            # segment_prediction = video_frame_predictions[(start + end) // 2]
             submission_str += '{0},{1}\n'.format(n_segments, segment_prediction)
             n_segments += 1
 

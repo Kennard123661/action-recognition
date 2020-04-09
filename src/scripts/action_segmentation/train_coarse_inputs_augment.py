@@ -13,7 +13,7 @@ import torch.nn.functional as F
 if __name__ == '__main__':
     import sys
     sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
-
+from config import ROOT_DIR
 from utils.notify_utils import telegram_watch
 from scripts.action_segmentation import ACTION_SEG_CONFIG_DIR, ACTION_SEG_CHECKPOINT_DIR, ACTION_SEG_LOG_DIR
 from scripts import set_determinstic_mode
@@ -24,7 +24,7 @@ from scripts.action_segmentation.create_submission import get_cls_results
 CHECKPOINT_DIR = os.path.join(ACTION_SEG_CHECKPOINT_DIR, 'coarse-inputs-augment')
 LOG_DIR = os.path.join(ACTION_SEG_LOG_DIR, 'coarse-inputs-augment')
 CONFIG_DIR = os.path.join(ACTION_SEG_CONFIG_DIR, 'coarse-inputs-augment')
-SUBMISSION_DIR = os.path.join('/mnt/HGST6/cs5242-project/submissions/action-segmentation/coarse-inputs-augment-temp')
+SUBMISSION_DIR = os.path.join(ROOT_DIR, 'submissions/action-segmentation/coarse-inputs-augment-temp')
 NUM_WORKERS = 2
 
 N_STAGES = 4
@@ -96,12 +96,13 @@ class Trainer:
         start_epoch = self.n_epochs
         for epoch in range(start_epoch, self.max_epochs):
             self.n_epochs += 1
+            submission_acc = self.get_submission_acc(test_dataset)
+            exit()
             self.train_step(train_dataset)
             self._save_checkpoint('model-{}'.format(self.n_epochs))
             self._save_checkpoint()  # update the latest model
             train_acc = self.test_step(train_val_dataset)
             test_acc = self.test_step(test_dataset)
-            submission_acc = self.get_submission_acc(test_dataset)
             print('INFO: at epoch {}, the train accuracy is {} and the test accuracy is {} submission acc is {}'
                   .format(self.n_epochs, train_acc, test_acc, submission_acc))
             log_dict = {
@@ -279,7 +280,27 @@ class TrainDataset(tdata.Dataset):
 
 
 class TestDataset(TrainDataset):
-    pass
+    def __len__(self):
+        return len(self.video_feat_files)
+
+    def __getitem__(self, idx):
+        video_feat_file = self.video_feat_files[idx]
+        coarse_label = os.path.split(video_feat_file)[-1].split('.')[0].split('_')[-1]
+        coarse_logit = breakfast.COARSE_LABELS.index(coarse_label)
+
+        features = np.load(video_feat_file)
+        logits = self.logits[idx]
+        assert features.shape[1] == len(logits)
+        features = features[:, ::SAMPLE_RATE]
+        logits = np.array(logits)[::SAMPLE_RATE]
+        coarse_features = np.zeros(shape=[len(features) + len(breakfast.COARSE_LABELS), features.shape[1]],
+                                   dtype=np.float32)
+        coarse_features[:len(features), :] = features
+        coarse_features[coarse_logit + len(features), :] = 1
+
+        features = torch.from_numpy(coarse_features)
+        logits = torch.from_numpy(logits)
+        return features, logits
 
 
 class PredictionDataset(tdata.Dataset):
