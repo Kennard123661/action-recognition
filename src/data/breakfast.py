@@ -347,12 +347,48 @@ def _print_coarse_labels():
     print(np.unique(coarse_labels))
 
 
+def _check_multiview_consistency():
+    """ there is no multiview frame consistency """
+    gt_dir = PROVIDED_GT_DIR
+    label_filenames = sorted(os.listdir(gt_dir))
+    label_filename_dict = {}
+    for label_filename in label_filenames:
+        label_class = label_filename.split('_')
+        label_class = '_'.join(label_class[-2:])
+        if label_class not in label_filename_dict.keys():
+            label_filename_dict[label_class] = [label_filename]
+        else:
+            label_filename_dict[label_class].append(label_filename)
+
+    for k, v in tqdm(label_filename_dict.items()):
+        labels = None
+        print(v)
+        for label_filename in v:
+            label_file = os.path.join(gt_dir, label_filename)
+            with open(label_file, 'r') as f:
+                curr_labels = f.readlines()
+            curr_labels = [label.strip() for label in curr_labels]
+            if labels is None:
+                labels = curr_labels
+            else:
+                if not np.array_equal(curr_labels, labels):
+                    for i, label in enumerate(curr_labels):
+                        if i >= len(labels):
+                            continue
+                        try:
+                            assert curr_labels[i] == labels[i]
+                        except:
+                            for a, _ in enumerate(curr_labels):
+                                print(curr_labels[i], labels[i])
+
+
 if __name__ == '__main__':
     # _check_mstcn_gt()
     # get_mstcn_data(split='train')
-    # _generate_mstcn_segment_labels()
-    _print_coarse_labels()
-    _print_cameras()
+    # # _generate_mstcn_segment_labels()
+    # _print_coarse_labels()
+    # _print_cameras()
+    _check_multiview_consistency()
     # _generate_test_segment_gt()
     # segments = get_submission_segments()
     # print(len(segments))

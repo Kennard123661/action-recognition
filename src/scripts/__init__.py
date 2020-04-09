@@ -17,7 +17,6 @@ def set_determinstic_mode(seed=1234):
     torch.backends.cudnn.benchmark = False
     np.random.seed(seed)
     random.seed(seed)
-    # tf.random.set_seed(seed)
 
 
 def parse_args():
