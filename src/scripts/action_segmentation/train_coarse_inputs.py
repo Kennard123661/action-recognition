@@ -24,7 +24,7 @@ from scripts.action_segmentation import ACTION_SEG_CONFIG_DIR, ACTION_SEG_CHECKP
 from scripts import set_determinstic_mode
 from nets.action_seg import mstcn
 import data.breakfast as breakfast
-from scripts.action_recognition.create_submission import get_cls_results
+from scripts.action_segmentation.create_submission import get_cls_results
 from config import ROOT_DIR
 from utils.notify_utils import telegram_watch, send_telegram_notification
 
