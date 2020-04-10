@@ -28,10 +28,10 @@ from scripts.action_recognition.create_submission import get_cls_results
 from config import ROOT_DIR
 from utils.notify_utils import telegram_watch, send_telegram_notification
 
-CHECKPOINT_DIR = os.path.join(ACTION_SEG_CHECKPOINT_DIR, 'coarse-inputs')
-LOG_DIR = os.path.join(ACTION_SEG_LOG_DIR, 'coarse-inputs')
-CONFIG_DIR = os.path.join(ACTION_SEG_CONFIG_DIR, 'coarse-inputs')
-SUBMISSION_DIR = os.path.join(ROOT_DIR, 'submissions/action-segmentation/coarse-inputs')
+CHECKPOINT_DIR = os.path.join(ACTION_SEG_CHECKPOINT_DIR, 'coarse-inputs-boundary')
+LOG_DIR = os.path.join(ACTION_SEG_LOG_DIR, 'coarse-inputs-boundary')
+CONFIG_DIR = os.path.join(ACTION_SEG_CONFIG_DIR, 'coarse-inputs-boundary')
+SUBMISSION_DIR = os.path.join(ROOT_DIR, 'submissions/action-segmentation/coarse-input-boundary')
 NUM_WORKERS = 2
 
 N_STAGES = 4
@@ -252,10 +252,21 @@ class TrainDataset(tdata.Dataset):
         assert features.shape[1] == len(logits)
         features = features[:, ::SAMPLE_RATE]
         logits = np.array(logits)[::SAMPLE_RATE]
-        coarse_features = np.zeros(shape=[len(features) + len(breakfast.COARSE_LABELS), features.shape[1]],
+        coarse_features = np.zeros(shape=[len(features) + len(breakfast.COARSE_LABELS) + 1, features.shape[1]],
                                    dtype=np.float32)
         coarse_features[:len(features), :] = features
         coarse_features[coarse_logit + len(features), :] = 1
+        boundary_idx = len(features) + len(breakfast.COARSE_LABELS)
+
+        # we mark the boundaries of the segment as additional information for the model
+        video_len = features.shape[1]
+        coarse_features[boundary_idx, 0] = 1
+        coarse_features[boundary_idx, features.shape[1] - 1] = 1
+        for i in range(1, video_len):
+            prev_logit = logits[i-1]
+            curr_logit = logits[i]
+            if prev_logit != curr_logit:
+                coarse_features[boundary_idx, i] = 1
 
         features = torch.from_numpy(coarse_features)
         logits = torch.from_numpy(logits)
@@ -299,7 +310,7 @@ class PredictionDataset(tdata.Dataset):
 
         features = np.load(video_feat_file)
         features = features[:, ::SAMPLE_RATE]
-        coarse_features = np.zeros(shape=[len(features) + len(breakfast.COARSE_LABELS), features.shape[1]],
+        coarse_features = np.zeros(shape=[len(features) + len(breakfast.COARSE_LABELS) + 1, features.shape[1]],
                                    dtype=np.float32)
         coarse_features[:len(features), :] = features
         coarse_features[coarse_logit + len(features), :] = 1
