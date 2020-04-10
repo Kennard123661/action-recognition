@@ -24,7 +24,7 @@ from scripts.action_recognition import ACTION_REG_CHECKPOINT_DIR, ACTION_REG_CON
     ACTION_REG_SUBMISSION_DIR
 from scripts.action_recognition import get_mstcn_action_reg_data
 from scripts import set_determinstic_mode
-from nets.action_seg import mstcn
+from nets.action_reg import mstcn
 import data.breakfast as breakfast
 from scripts.action_segmentation.create_submission import get_cls_results
 from utils.notify_utils import telegram_watch, send_telegram_notification
@@ -99,7 +99,7 @@ class Trainer:
 
         train_dataset = TrainDataset(train_segments, train_windows, train_labels, train_logits)
         test_dataset = TestDataset(test_segments, test_windows, test_labels, test_logits)
-        train_val_dataset = TestDataset(train_segments, train_labels, train_logits)
+        train_val_dataset = TestDataset(train_segments, train_windows, train_labels, train_logits)
 
         start_epoch = self.n_epochs
         max_acc = 0
@@ -243,7 +243,7 @@ class TrainDataset(tdata.Dataset):
         start, end = self.segment_windows[idx]
 
         features = np.load(video_feat_file)
-        features = features[start:end]
+        features = features[:, start:end]
         features = features[:, ::SAMPLE_RATE]
         coarse_features = np.zeros(shape=[len(features) + len(breakfast.COARSE_LABELS), features.shape[1]],
                                    dtype=np.float32)

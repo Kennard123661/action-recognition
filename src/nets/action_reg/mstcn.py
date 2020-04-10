@@ -7,10 +7,10 @@ import copy
 class MultiStageModel(nn.Module):
     def __init__(self, num_stages, num_layers, num_f_maps, dim, num_classes):
         super(MultiStageModel, self).__init__()
-        self.stage1 = SingleStageModel(num_layers, num_f_maps, dim, num_classes)
+        self.stage1 = SingleStageModel(num_layers, num_f_maps, dim, num_f_maps)
         self.stages = nn.ModuleList([copy.deepcopy(SingleStageModel(num_layers, num_f_maps, num_f_maps, num_f_maps))
                                      for s in range(num_stages-1)])
-        self.linear_layer = nn.Linear(in_features=num_f_maps, out_features=num_f_maps)
+        self.linear_layer = nn.Linear(in_features=num_f_maps, out_features=num_classes)
 
     def forward(self, x, mask):
         out = self.stage1(x, mask)
