@@ -173,12 +173,13 @@ class Trainer:
         n_predictions = 0
         with torch.no_grad():
             for feats, logits, masks in tqdm(dataloader):
+                assert len(feats) == len(logits)
                 feats = feats.cuda(self.device)
                 logits = logits.cuda(self.device)
                 masks = masks.cuda(self.device)
                 predictions = self.model(feats, masks)
                 predictions = torch.argmax(predictions, dim=1)
-                n_correct += (predictions == logits).float()
+                n_correct += torch.sum(predictions == logits).float()
                 n_predictions += len(predictions)
         accuracy = n_correct / n_predictions
         return accuracy
@@ -227,6 +228,7 @@ class Trainer:
 class TrainDataset(tdata.Dataset):
     def __init__(self, feat_files, segment_windows, labels, logits):
         super(TrainDataset, self).__init__()
+        assert len(feat_files) == len(segment_windows) == len(labels) == len(logits)
         self.video_feat_files = feat_files
         self.segment_windows = segment_windows
         self.labels = labels
@@ -257,6 +259,7 @@ class TrainDataset(tdata.Dataset):
     @staticmethod
     def collate_fn(batch):
         features, logits = zip(*batch)
+        assert len(features) == len(logits)
         max_video_length = 0
         for feature in features:
             max_video_length = max(feature.shape[1], max_video_length)
@@ -269,6 +272,7 @@ class TrainDataset(tdata.Dataset):
             padded_features[i, :, :video_len] = feature
             masks[i, :, :video_len] = torch.ones(breakfast.N_MSTCN_CLASSES, video_len)
         logits = default_collate(logits)
+        assert len(logits) == len(padded_features)
         return padded_features, logits, masks
 
 

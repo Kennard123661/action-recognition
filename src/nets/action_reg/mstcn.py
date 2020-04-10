@@ -16,7 +16,7 @@ class MultiStageModel(nn.Module):
         out = self.stage1(x, mask)
         for s in self.stages:
             out = s(F.softmax(out, dim=1) * mask[:, 0:1, :], mask)
-        avg_pooling = torch.mean(out, dim=3)
+        avg_pooling = torch.mean(out, dim=2)
         out = self.linear_layer(avg_pooling)
         return out
 
@@ -48,3 +48,11 @@ class DilatedResidualLayer(nn.Module):
         out = self.conv_1x1(out)
         out = self.dropout(out)
         return (x + out) * mask[:, 0:1, :]
+
+
+if __name__ == '__main__':
+    inputs = torch.randn(size=[20, 30, 40])
+    masks = torch.ones(size=[20, 30, 40])
+    model =MultiStageModel(num_stages=4, num_classes=48, num_f_maps=100, num_layers=10, dim=30)
+    predictions= model(inputs, masks)
+    print(predictions.shape)
