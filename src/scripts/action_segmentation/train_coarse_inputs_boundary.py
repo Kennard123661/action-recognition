@@ -31,13 +31,13 @@ from utils.notify_utils import telegram_watch, send_telegram_notification
 CHECKPOINT_DIR = os.path.join(ACTION_SEG_CHECKPOINT_DIR, 'coarse-inputs-boundary')
 LOG_DIR = os.path.join(ACTION_SEG_LOG_DIR, 'coarse-inputs-boundary')
 CONFIG_DIR = os.path.join(ACTION_SEG_CONFIG_DIR, 'coarse-inputs-boundary')
-SUBMISSION_DIR = os.path.join(ROOT_DIR, 'submissions/action-segmentation/coarse-input-boundary')
+SUBMISSION_DIR = os.path.join(ROOT_DIR, 'submissions/action-segmentation/coarse-input-boundary-temp')
 NUM_WORKERS = 2
 
 N_STAGES = 4
 N_LAYERS = 10
 N_FEATURE_MAPS = 128
-IN_CHANNELS = 2048 + len(breakfast.COARSE_LABELS)
+IN_CHANNELS = 2048 + len(breakfast.COARSE_LABELS) + 1
 
 # todo change this.
 SAMPLE_RATE = 1
