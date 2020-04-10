@@ -20,18 +20,19 @@ if __name__ == '__main__':
     import sys
     sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
-from scripts.action_segmentation import ACTION_SEG_CONFIG_DIR, ACTION_SEG_CHECKPOINT_DIR, ACTION_SEG_LOG_DIR
+from scripts.action_recognition import ACTION_REG_CHECKPOINT_DIR, ACTION_REG_CONFIG_DIR, ACTION_REG_LOG_DIR, \
+    ACTION_REG_SUBMISSION_DIR
+from scripts.action_recognition import get_mstcn_action_reg_data
 from scripts import set_determinstic_mode
 from nets.action_seg import mstcn
 import data.breakfast as breakfast
-from scripts.action_recognition.create_submission import get_cls_results
-from config import ROOT_DIR
+from scripts.action_segmentation.create_submission import get_cls_results
 from utils.notify_utils import telegram_watch, send_telegram_notification
 
-CHECKPOINT_DIR = os.path.join(ACTION_SEG_CHECKPOINT_DIR, 'coarse-inputs')
-LOG_DIR = os.path.join(ACTION_SEG_LOG_DIR, 'coarse-inputs')
-CONFIG_DIR = os.path.join(ACTION_SEG_CONFIG_DIR, 'coarse-inputs')
-SUBMISSION_DIR = os.path.join(ROOT_DIR, 'submissions/action-segmentation/coarse-inputs-augment')
+CHECKPOINT_DIR = os.path.join(ACTION_REG_CHECKPOINT_DIR, 'coarse-inputs')
+LOG_DIR = os.path.join(ACTION_REG_LOG_DIR, 'coarse-inputs')
+CONFIG_DIR = os.path.join(ACTION_REG_CONFIG_DIR, 'coarse-inputs')
+SUBMISSION_DIR = os.path.join(ACTION_REG_SUBMISSION_DIR, 'coarse-inputs')
 NUM_WORKERS = 2
 
 N_STAGES = 4
@@ -93,11 +94,11 @@ class Trainer:
         self.submission_dir = os.path.join(SUBMISSION_DIR, self.experiment)
 
     def train(self, train_data, test_data):
-        train_segments, train_labels, train_logits = train_data
-        test_segments, test_labels, test_logits = test_data
+        train_segments, train_windows, train_labels, train_logits = train_data
+        test_segments, test_windows, test_labels, test_logits = test_data
 
-        train_dataset = TrainDataset(train_segments, train_labels, train_logits)
-        test_dataset = TestDataset(test_segments, test_labels, test_logits)
+        train_dataset = TrainDataset(train_segments, train_windows, train_labels, train_logits)
+        test_dataset = TestDataset(test_segments, test_windows, test_labels, test_logits)
         train_val_dataset = TestDataset(train_segments, train_labels, train_logits)
 
         start_epoch = self.n_epochs
@@ -139,15 +140,7 @@ class Trainer:
             self.model.zero_grad()
 
             predictions = self.model(feats, masks)
-            loss = None
-            for p in predictions:
-                if loss is None:
-                    loss = self.ce_loss(p.transpose(2, 1).contiguous().view(-1, breakfast.N_MSTCN_CLASSES), logits.view(-1))
-                else:
-                    loss += self.ce_loss(p.transpose(2, 1).contiguous().view(-1, breakfast.N_MSTCN_CLASSES), logits.view(-1))
-                loss += 0.15 * torch.mean(torch.clamp(
-                    self.mse_loss(F.log_softmax(p[:, :, 1:], dim=1),
-                                  F.log_softmax(p.detach()[:, :, :-1], dim=1)), min=0, max=16) * masks[:, :, 1:])
+            loss = self.ce_loss(predictions, logits)
             loss.backward()
             self.optimizer.step()
             losses.append(loss.item())
@@ -162,15 +155,15 @@ class Trainer:
         dataloader = tdata.DataLoader(test_dataset, shuffle=False, batch_size=self.test_batch_size,
                                       collate_fn=test_dataset.collate_fn, pin_memory=False, num_workers=NUM_WORKERS)
         self.model.eval()
-        frame_level_predictions = []
+        segment_predictions = []
         with torch.no_grad():
             for feats, logits, masks in tqdm(dataloader):
                 feats = feats.cuda(self.device)
                 masks = masks.cuda(self.device)
                 predictions = self.model(feats, masks)
-                predictions = torch.argmax(predictions[-1], dim=1)
-                frame_level_predictions.extend(predictions.detach().cpu().numpy().tolist())
-        return get_cls_results(frame_level_predictions, submission_dir=self.submission_dir)
+                predictions = torch.argmax(predictions, dim=1)
+                segment_predictions.extend(predictions.detach().cpu().numpy().tolist())
+        return get_cls_results(segment_predictions, submission_dir=self.submission_dir)
 
     def test_step(self, test_dataset):
         dataloader = tdata.DataLoader(test_dataset, shuffle=False, batch_size=self.test_batch_size,
@@ -184,9 +177,9 @@ class Trainer:
                 logits = logits.cuda(self.device)
                 masks = masks.cuda(self.device)
                 predictions = self.model(feats, masks)
-                predictions = torch.argmax(predictions[-1], dim=1)
-                n_correct += ((predictions == logits).float() * masks[:, 0, :]).sum().item()
-                n_predictions += torch.sum(masks[:, 0, :]).item()
+                predictions = torch.argmax(predictions, dim=1)
+                n_correct += (predictions == logits).float()
+                n_predictions += len(predictions)
         accuracy = n_correct / n_predictions
         return accuracy
 
@@ -232,9 +225,10 @@ class Trainer:
 
 
 class TrainDataset(tdata.Dataset):
-    def __init__(self, feat_files, labels, logits):
+    def __init__(self, feat_files, segment_windows, labels, logits):
         super(TrainDataset, self).__init__()
         self.video_feat_files = feat_files
+        self.segment_windows = segment_windows
         self.labels = labels
         self.logits = logits
         self.n_classes = breakfast.N_MSTCN_CLASSES
@@ -246,20 +240,19 @@ class TrainDataset(tdata.Dataset):
         video_feat_file = self.video_feat_files[idx]
         coarse_label = os.path.split(video_feat_file)[-1].split('.')[0].split('_')[-1]
         coarse_logit = breakfast.COARSE_LABELS.index(coarse_label)
+        start, end = self.segment_windows[idx]
 
         features = np.load(video_feat_file)
-        logits = self.logits[idx]
-        assert features.shape[1] == len(logits)
+        features = features[start:end]
         features = features[:, ::SAMPLE_RATE]
-        logits = np.array(logits)[::SAMPLE_RATE]
         coarse_features = np.zeros(shape=[len(features) + len(breakfast.COARSE_LABELS), features.shape[1]],
                                    dtype=np.float32)
         coarse_features[:len(features), :] = features
         coarse_features[coarse_logit + len(features), :] = 1
 
         features = torch.from_numpy(coarse_features)
-        logits = torch.from_numpy(logits)
-        return features, logits
+        logit = self.logits[idx]
+        return features, logit
 
     @staticmethod
     def collate_fn(batch):
@@ -269,15 +262,14 @@ class TrainDataset(tdata.Dataset):
             max_video_length = max(feature.shape[1], max_video_length)
 
         padded_features = torch.zeros(len(features), IN_CHANNELS, max_video_length, dtype=torch.float)
-        padded_logits = torch.zeros(len(features), max_video_length, dtype=torch.long) * -100
         masks = torch.zeros(len(features), breakfast.N_MSTCN_CLASSES, max_video_length, dtype=torch.float)
 
         for i, feature in enumerate(features):
             video_len = feature.shape[1]
             padded_features[i, :, :video_len] = feature
-            padded_logits[i, :video_len] = logits[i]
             masks[i, :, :video_len] = torch.ones(breakfast.N_MSTCN_CLASSES, video_len)
-        return padded_features, padded_logits, masks
+        logits = default_collate(logits)
+        return padded_features, logits, masks
 
 
 class TestDataset(TrainDataset):
@@ -337,8 +329,8 @@ def main():
     set_determinstic_mode(seed=1538574472)
     args = _parse_args()
     trainer = Trainer(args.config, args.device)
-    train_data = breakfast.get_mstcn_data('train')
-    test_data = breakfast.get_mstcn_data('test')
+    train_data = get_mstcn_action_reg_data('train')
+    test_data = get_mstcn_action_reg_data('test')
     trainer.train(train_data, test_data)
 
 

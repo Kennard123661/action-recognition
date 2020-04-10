@@ -8,9 +8,10 @@ if __name__ == '__main__':
     sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from scripts import set_determinstic_mode
-from data.breakfast import get_submission_segments, SUBMISSION_GT_FILE, read_mapping_file
+import data.breakfast as breakfast
 from config import ROOT_DIR
-SUBMISSION_DIR = os.path.join(ROOT_DIR, 'submissions', 'action-recognition')
+from scripts.submission_utils import get_submission_accuracy
+SUBMISSION_DIR = os.path.join(ROOT_DIR, 'submissions', 'action-segmentation')
 
 
 def _parse_args():
@@ -22,29 +23,59 @@ def _parse_args():
     return argparser.parse_args()
 
 
+def get_cls_results(segment_predictions, submission_dir, postprocess='midpoint'):
+    submission_feats, _, _ = breakfast.get_mstcn_data(split='test')
+    video_names = [os.path.split(feat_file)[-1] for feat_file in submission_feats]
+
+    with open(breakfast.SUBMISSION_LABEL_FILE, 'r') as f:
+        submission_timestamps = f.readlines()
+    submission_timestamps = [line.strip().split(' ') for line in submission_timestamps]
+    submission_timestamps = [np.array(timestamps).astype(int) for timestamps in submission_timestamps]
+
+    n_segments = 0
+    submission_str = 'Id,Category\n'
+    segment_idx = 0
+    for i, video_name in enumerate(video_names):
+        video_timestamps = submission_timestamps[i]
+        n_timestamps = len(video_timestamps)
+        for j in range(n_timestamps - 1):
+            start = video_timestamps[j]
+            end = video_timestamps[j + 1]
+
+            vid_len = end - start
+            assert vid_len > 0
+            segment_prediction = segment_predictions[segment_idx]
+            segment_idx += 1
+            submission_str += '{0},{1}\n'.format(n_segments, segment_prediction)
+            n_segments += 1
+    assert n_segments == len(segment_predictions)
+
+    submission_file = os.path.join(submission_dir, 'submission.csv')
+    with open(submission_file, 'w') as f:
+        f.write(submission_str)
+    return get_submission_accuracy(submission_file)
+
+
 def main():
     set_determinstic_mode()
     args = _parse_args()
 
-    if args.model == 'baselines':
-        from scripts.action_recognition.train_baseline import Trainer
+    if args.model == 'mstcn':
+        from scripts.action_segmentation.train_mstcn import Trainer
+    elif args.model == 'coarse-inputs':
+        from scripts.action_segmentation.train_coarse_inputs import Trainer
     else:
         raise ValueError('no such model')
-    submission_dir = os.path.join(SUBMISSION_DIR, args.model)
+    submission_dir = os.path.join(SUBMISSION_DIR, args.model, args.config)
     if not os.path.exists(submission_dir):
         os.makedirs(submission_dir)
-    submission_file = os.path.join(submission_dir, args.config + '.csv')
-    if os.path.exists(submission_file):
-        raise ValueError(submission_file + ' exists, please delete if you want a new submission with this name')
+    else:
+        raise ValueError(submission_dir + ' exists, please delete if you want a new submission with this name')
 
     trainer = Trainer(args.config, args.device)
-    submssion_segments = get_submission_segments()
-    predictions = trainer.predict(submssion_segments)
-    with open(submission_file, 'w') as f:
-        f.write('Id,Category\n')
-        for i, prediction in enumerate(predictions):
-            prediction_str = '{0},{1}\n'.format(i, prediction)
-            f.write(prediction_str)
+    submission_segments, _, _ = breakfast.get_mstcn_data(split='test')
+    frame_level_predictions = trainer.predict(submission_segments)
+    return get_cls_results(frame_level_predictions, submission_dir)
 
 
 if __name__ == '__main__':

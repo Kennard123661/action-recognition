@@ -8,6 +8,7 @@ ROOT_DIR = os.path.join(os.path.dirname(__file__), '..', '..')
 BASE_CHECKPOINT_DIR = os.path.join(ROOT_DIR, 'checkpoints')
 BASE_LOG_DIR = os.path.join(ROOT_DIR, 'logs')
 BASE_CONFIG_DIR = os.path.join(ROOT_DIR, 'configs')
+BASE_SUBMISSION_DIR = os.path.join(ROOT_DIR, 'submissions')
 NUM_WORKERS = 8
 
 
