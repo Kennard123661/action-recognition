@@ -110,17 +110,15 @@ class Trainer:
             self._save_checkpoint()  # update the latest model
             train_acc = self.test_step(train_val_dataset)
             test_acc = self.test_step(test_dataset)
-            submission_acc = self.get_submission_acc(test_dataset)
-            result_str = 'INFO: at epoch {}, the train accuracy is {} and the test accuracy is {} submission acc is {}'\
-                .format(self.n_epochs, train_acc, test_acc, submission_acc)
-            print(result_str)
-            if submission_acc > max_acc:
-                max_acc = submission_acc
+            # submission_acc = self.get_submission_acc(test_dataset)
+            result_str = 'INFO: at epoch {}, the train accuracy is {} and the test accuracy is {}'\
+                .format(self.n_epochs, train_acc, test_acc)
+            if test_acc > max_acc:
+                max_acc = test_acc
                 send_telegram_notification(result_str + '\n' + 'from train-coarse-inputs:' + self.experiment)
             log_dict = {
                 'train': train_acc,
                 'test': test_acc,
-                'submission': submission_acc
             }
             self.tboard_writer.add_scalars('accuracy', log_dict, self.n_epochs)
 
