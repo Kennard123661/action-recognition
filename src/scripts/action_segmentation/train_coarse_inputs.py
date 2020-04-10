@@ -288,16 +288,23 @@ class PredictionDataset(tdata.Dataset):
     def __init__(self, feat_files):
         super(PredictionDataset, self).__init__()
         self.video_feat_files = feat_files
-        self.n_classes = breakfast.N_MSTCN_CLASSES
 
     def __len__(self):
         return len(self.video_feat_files)
 
     def __getitem__(self, idx):
         video_feat_file = self.video_feat_files[idx]
+        coarse_label = os.path.split(video_feat_file)[-1].split('.')[0].split('_')[-1]
+        coarse_logit = breakfast.COARSE_LABELS.index(coarse_label)
+
         features = np.load(video_feat_file)
         features = features[:, ::SAMPLE_RATE]
-        features = torch.from_numpy(features)
+        coarse_features = np.zeros(shape=[len(features) + len(breakfast.COARSE_LABELS), features.shape[1]],
+                                   dtype=np.float32)
+        coarse_features[:len(features), :] = features
+        coarse_features[coarse_logit + len(features), :] = 1
+
+        features = torch.from_numpy(coarse_features)
         return features
 
     @staticmethod
