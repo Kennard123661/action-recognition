@@ -24,7 +24,7 @@ from scripts.action_recognition import ACTION_REG_CHECKPOINT_DIR, ACTION_REG_CON
     ACTION_REG_SUBMISSION_DIR
 from scripts.action_recognition import get_mstcn_action_reg_data
 from scripts import set_determinstic_mode
-from nets.action_seg import mstcn
+from nets.action_reg import mstcn
 import data.breakfast as breakfast
 from scripts.action_segmentation.create_submission import get_cls_results
 from utils.notify_utils import telegram_watch, send_telegram_notification
@@ -99,7 +99,7 @@ class Trainer:
 
         train_dataset = TrainDataset(train_segments, train_windows, train_labels, train_logits)
         test_dataset = TestDataset(test_segments, test_windows, test_labels, test_logits)
-        train_val_dataset = TestDataset(train_segments, train_labels, train_logits)
+        train_val_dataset = TestDataset(train_segments, train_windows, train_labels, train_logits)
 
         start_epoch = self.n_epochs
         max_acc = 0
@@ -110,17 +110,15 @@ class Trainer:
             self._save_checkpoint()  # update the latest model
             train_acc = self.test_step(train_val_dataset)
             test_acc = self.test_step(test_dataset)
-            submission_acc = self.get_submission_acc(test_dataset)
-            result_str = 'INFO: at epoch {}, the train accuracy is {} and the test accuracy is {} submission acc is {}'\
-                .format(self.n_epochs, train_acc, test_acc, submission_acc)
-            print(result_str)
-            if submission_acc > max_acc:
-                max_acc = submission_acc
+            # submission_acc = self.get_submission_acc(test_dataset)
+            result_str = 'INFO: at epoch {}, the train accuracy is {} and the test accuracy is {}'\
+                .format(self.n_epochs, train_acc, test_acc)
+            if test_acc > max_acc:
+                max_acc = test_acc
                 send_telegram_notification(result_str + '\n' + 'from train-coarse-inputs:' + self.experiment)
             log_dict = {
                 'train': train_acc,
                 'test': test_acc,
-                'submission': submission_acc
             }
             self.tboard_writer.add_scalars('accuracy', log_dict, self.n_epochs)
 
@@ -173,12 +171,13 @@ class Trainer:
         n_predictions = 0
         with torch.no_grad():
             for feats, logits, masks in tqdm(dataloader):
+                assert len(feats) == len(logits)
                 feats = feats.cuda(self.device)
                 logits = logits.cuda(self.device)
                 masks = masks.cuda(self.device)
                 predictions = self.model(feats, masks)
                 predictions = torch.argmax(predictions, dim=1)
-                n_correct += (predictions == logits).float()
+                n_correct += torch.sum(predictions == logits).float()
                 n_predictions += len(predictions)
         accuracy = n_correct / n_predictions
         return accuracy
@@ -227,6 +226,7 @@ class Trainer:
 class TrainDataset(tdata.Dataset):
     def __init__(self, feat_files, segment_windows, labels, logits):
         super(TrainDataset, self).__init__()
+        assert len(feat_files) == len(segment_windows) == len(labels) == len(logits)
         self.video_feat_files = feat_files
         self.segment_windows = segment_windows
         self.labels = labels
@@ -243,7 +243,7 @@ class TrainDataset(tdata.Dataset):
         start, end = self.segment_windows[idx]
 
         features = np.load(video_feat_file)
-        features = features[start:end]
+        features = features[:, start:end]
         features = features[:, ::SAMPLE_RATE]
         coarse_features = np.zeros(shape=[len(features) + len(breakfast.COARSE_LABELS), features.shape[1]],
                                    dtype=np.float32)
@@ -257,6 +257,7 @@ class TrainDataset(tdata.Dataset):
     @staticmethod
     def collate_fn(batch):
         features, logits = zip(*batch)
+        assert len(features) == len(logits)
         max_video_length = 0
         for feature in features:
             max_video_length = max(feature.shape[1], max_video_length)
@@ -269,6 +270,7 @@ class TrainDataset(tdata.Dataset):
             padded_features[i, :, :video_len] = feature
             masks[i, :, :video_len] = torch.ones(breakfast.N_MSTCN_CLASSES, video_len)
         logits = default_collate(logits)
+        assert len(logits) == len(padded_features)
         return padded_features, logits, masks
 
 
