@@ -2,36 +2,29 @@ import torch.nn as nn
 import os
 import json
 import torch
-import math
 import torch.utils.data as tdata
 import torch.optim as optim
-from torch.utils.data._utils.collate import default_collate
 import numpy as np
-from torchvision.transforms import Compose
-import torchvision.transforms._transforms_video as transforms
 from tqdm import tqdm
 import tensorboardX
 import argparse
 import torch.nn.functional as F
 
-R2PLU1D_MODELS = ['r2plus1d_34_32_ig65m', 'r2plus1d_34_32_kinetics', 'r2plus1d_34_8_ig65m', 'r2plus1d_34_8_kinetics']
-
 if __name__ == '__main__':
     import sys
     sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..'))
-
+from config import ROOT_DIR
+from utils.notify_utils import telegram_watch, send_telegram_notification
 from scripts.action_segmentation import ACTION_SEG_CONFIG_DIR, ACTION_SEG_CHECKPOINT_DIR, ACTION_SEG_LOG_DIR
 from scripts import set_determinstic_mode
 from nets.action_seg import mstcn
 import data.breakfast as breakfast
-from scripts.action_recognition.create_submission import get_cls_results
-from config import ROOT_DIR
-from utils.notify_utils import telegram_watch, send_telegram_notification
+from scripts.action_segmentation.create_submission import get_cls_results
 
-CHECKPOINT_DIR = os.path.join(ACTION_SEG_CHECKPOINT_DIR, 'coarse-inputs')
-LOG_DIR = os.path.join(ACTION_SEG_LOG_DIR, 'coarse-inputs')
-CONFIG_DIR = os.path.join(ACTION_SEG_CONFIG_DIR, 'coarse-inputs')
-SUBMISSION_DIR = os.path.join(ROOT_DIR, 'submissions/action-segmentation/coarse-inputs-augment')
+CHECKPOINT_DIR = os.path.join(ACTION_SEG_CHECKPOINT_DIR, 'coarse-inputs-augment-only')
+LOG_DIR = os.path.join(ACTION_SEG_LOG_DIR, 'coarse-inputs-augment-only')
+CONFIG_DIR = os.path.join(ACTION_SEG_CONFIG_DIR, 'coarse-inputs-augment-only')
+SUBMISSION_DIR = os.path.join(ROOT_DIR, 'submissions/action-segmentation/coarse-inputs-augment-only-temp')
 NUM_WORKERS = 2
 
 N_STAGES = 4
@@ -101,7 +94,7 @@ class Trainer:
         train_val_dataset = TestDataset(train_segments, train_labels, train_logits)
 
         start_epoch = self.n_epochs
-        max_acc = 0
+        max_submission_acc = 0
         for epoch in range(start_epoch, self.max_epochs):
             self.n_epochs += 1
             self.train_step(train_dataset)
@@ -113,9 +106,10 @@ class Trainer:
             result_str = 'INFO: at epoch {}, the train accuracy is {} and the test accuracy is {} submission acc is {}'\
                 .format(self.n_epochs, train_acc, test_acc, submission_acc)
             print(result_str)
-            if submission_acc > max_acc:
-                max_acc = submission_acc
-                send_telegram_notification(result_str + '\n' + 'from train-coarse-inputs:' + self.experiment)
+            if submission_acc > max_submission_acc:
+                max_submission_acc = submission_acc
+                send_telegram_notification(result_str + '\n' + 'from only-augment')
+
             log_dict = {
                 'train': train_acc,
                 'test': test_acc,
@@ -238,6 +232,7 @@ class TrainDataset(tdata.Dataset):
         self.labels = labels
         self.logits = logits
         self.n_classes = breakfast.N_MSTCN_CLASSES
+        self.augmnet_percent = 0.5
 
     def __len__(self):
         return len(self.video_feat_files)
@@ -257,6 +252,12 @@ class TrainDataset(tdata.Dataset):
         coarse_features[:len(features), :] = features
         coarse_features[coarse_logit + len(features), :] = 1
 
+        video_len = coarse_features.shape[1]
+        max_start = video_len // 2
+        start_idx = np.random.choice(max_start)
+        end_idx = min(np.random.choice(video_len) + start_idx, video_len)
+        coarse_features = coarse_features[:, start_idx:end_idx]
+        logits = logits[start_idx:end_idx]
         features = torch.from_numpy(coarse_features)
         logits = torch.from_numpy(logits)
         return features, logits
@@ -281,14 +282,6 @@ class TrainDataset(tdata.Dataset):
 
 
 class TestDataset(TrainDataset):
-    pass
-
-
-class PredictionDataset(tdata.Dataset):
-    def __init__(self, feat_files):
-        super(PredictionDataset, self).__init__()
-        self.video_feat_files = feat_files
-
     def __len__(self):
         return len(self.video_feat_files)
 
@@ -298,13 +291,34 @@ class PredictionDataset(tdata.Dataset):
         coarse_logit = breakfast.COARSE_LABELS.index(coarse_label)
 
         features = np.load(video_feat_file)
+        logits = self.logits[idx]
+        assert features.shape[1] == len(logits)
         features = features[:, ::SAMPLE_RATE]
+        logits = np.array(logits)[::SAMPLE_RATE]
         coarse_features = np.zeros(shape=[len(features) + len(breakfast.COARSE_LABELS), features.shape[1]],
                                    dtype=np.float32)
         coarse_features[:len(features), :] = features
         coarse_features[coarse_logit + len(features), :] = 1
 
         features = torch.from_numpy(coarse_features)
+        logits = torch.from_numpy(logits)
+        return features, logits
+
+
+class PredictionDataset(tdata.Dataset):
+    def __init__(self, feat_files):
+        super(PredictionDataset, self).__init__()
+        self.video_feat_files = feat_files
+        self.n_classes = breakfast.N_MSTCN_CLASSES
+
+    def __len__(self):
+        return len(self.video_feat_files)
+
+    def __getitem__(self, idx):
+        video_feat_file = self.video_feat_files[idx]
+        features = np.load(video_feat_file)
+        features = features[:, ::SAMPLE_RATE]
+        features = torch.from_numpy(features)
         return features
 
     @staticmethod

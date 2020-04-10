@@ -80,6 +80,8 @@ def main():
 
     if args.model == 'mstcn':
         from scripts.action_segmentation.train_mstcn import Trainer
+    elif args.model == 'coarse-inputs':
+        from scripts.action_segmentation.train_coarse_inputs import Trainer
     else:
         raise ValueError('no such model')
     submission_dir = os.path.join(SUBMISSION_DIR, args.model, args.config)
@@ -89,8 +91,8 @@ def main():
         raise ValueError(submission_dir + ' exists, please delete if you want a new submission with this name')
 
     trainer = Trainer(args.config, args.device)
-    submission_feats, _, _ = breakfast.get_mstcn_data(split='test')
-    frame_level_predictions = trainer.predict(submission_feats)
+    submission_segments, _, _ = breakfast.get_mstcn_data(split='test')
+    frame_level_predictions = trainer.predict(submission_segments)
     return get_cls_results(frame_level_predictions, submission_dir)
 
 
