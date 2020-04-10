@@ -80,6 +80,8 @@ def main():
 
     if args.model == 'mstcn':
         from scripts.action_segmentation.train_mstcn import Trainer
+    elif args.model == 'coarse-inputs':
+        from scripts.action_segmentation.train_coarse_inputs import Trainer
     else:
         raise ValueError('no such model')
     submission_dir = os.path.join(SUBMISSION_DIR, args.model, args.config)
