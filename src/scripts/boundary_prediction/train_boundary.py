@@ -28,10 +28,10 @@ from scripts.action_segmentation.create_submission import get_cls_results
 from config import ROOT_DIR
 from utils.notify_utils import telegram_watch, send_telegram_notification
 
-CHECKPOINT_DIR = os.path.join(BOUNDARY_PRED_CHECKPOINT_DIR, 'coarse-inputs')
-LOG_DIR = os.path.join(BOUNDARY_PRED_LOG_DIR, 'coarse-inputs')
-CONFIG_DIR = os.path.join(BOUNDARY_PRED_CONFIG_DIR, 'coarse-inputs')
-SUBMISSION_DIR = os.path.join(ROOT_DIR, 'submissions/boundary-prediction/boundary-pred-temp')
+CHECKPOINT_DIR = os.path.join(BOUNDARY_PRED_CHECKPOINT_DIR, 'mstcn')
+LOG_DIR = os.path.join(BOUNDARY_PRED_LOG_DIR, 'mstcn')
+CONFIG_DIR = os.path.join(BOUNDARY_PRED_CONFIG_DIR, 'mstcn')
+SUBMISSION_DIR = os.path.join(ROOT_DIR, 'submissions/boundary-prediction/mstcn')
 NUM_WORKERS = 2
 
 N_STAGES = 4
@@ -104,11 +104,12 @@ class Trainer:
         max_acc = 0
         for epoch in range(start_epoch, self.max_epochs):
             self.n_epochs += 1
+            test_acc = self.test_step(test_dataset)
+            print('test-acc: ', test_acc)
             self.train_step(train_dataset)
             self._save_checkpoint('model-{}'.format(self.n_epochs))
             self._save_checkpoint()  # update the latest model
             train_acc = self.test_step(train_val_dataset)
-            test_acc = self.test_step(test_dataset)
             result_str = 'INFO: at epoch {}, the train accuracy is {} and the test accuracy is {}'\
                 .format(self.n_epochs, train_acc, test_acc)
             print(result_str)
@@ -140,14 +141,11 @@ class Trainer:
             loss = None
             for p in predictions:
                 if loss is None:
-                    loss = self.ce_loss(p.transpose(2, 1).contiguous().view(-1, 1) * masks.reshape(-1),
-                                        logits.view(-1) * masks.reshape(-1))
-                else:
-                    loss += self.ce_loss(p.transpose(2, 1).contiguous().view(-1, 1) * masks.reshape(-1),
+                    loss = self.ce_loss(p.transpose(2, 1).contiguous().view(-1) * masks.reshape(-1),
                                          logits.view(-1) * masks.reshape(-1))
-                loss += 0.15 * torch.mean(torch.clamp(
-                    self.mse_loss(F.log_softmax(p[:, :, 1:], dim=1) * masks.reshape(-1),
-                                  F.log_softmax(p.detach()[:, :, :-1], dim=1)), min=0, max=16) * masks[:, :, 1:])
+                else:
+                    loss += self.ce_loss(p.transpose(2, 1).contiguous().view(-1) * masks.reshape(-1),
+                                         logits.view(-1) * masks.reshape(-1))
             loss.backward()
             self.optimizer.step()
             losses.append(loss.item())
@@ -157,20 +155,6 @@ class Trainer:
 
         if isinstance(self.scheduler, optim.lr_scheduler.ReduceLROnPlateau):
             self.scheduler.step(avg_loss)
-
-    def get_submission_acc(self, test_dataset):
-        dataloader = tdata.DataLoader(test_dataset, shuffle=False, batch_size=self.test_batch_size,
-                                      collate_fn=test_dataset.collate_fn, pin_memory=False, num_workers=NUM_WORKERS)
-        self.model.eval()
-        frame_level_predictions = []
-        with torch.no_grad():
-            for feats, logits, masks in tqdm(dataloader):
-                feats = feats.cuda(self.device)
-                masks = masks.cuda(self.device)
-                predictions = self.model(feats, masks)
-                predictions = torch.argmax(predictions[-1], dim=1)
-                frame_level_predictions.extend(predictions.detach().cpu().numpy().tolist())
-        return get_cls_results(frame_level_predictions, submission_dir=self.submission_dir)
 
     def test_step(self, test_dataset):
         dataloader = tdata.DataLoader(test_dataset, shuffle=False, batch_size=self.test_batch_size,
@@ -184,7 +168,7 @@ class Trainer:
                 logits = logits.cuda(self.device)
                 masks = masks.cuda(self.device)
                 predictions = self.model(feats, masks)
-                predictions = torch.argmax(predictions[-1], dim=1)
+                predictions = torch.round(predictions).squeeze().long()
                 n_correct += ((predictions == logits).float() * masks[:, 0, :]).sum().item()
                 n_predictions += torch.sum(masks[:, 0, :]).item()
         accuracy = n_correct / n_predictions
@@ -214,22 +198,6 @@ class Trainer:
         else:
             print('INFO: checkpoint does not exist, continuing...')
 
-    def predict(self, submission_feats):
-        dataset = PredictionDataset(submission_feats)
-        dataloader = tdata.DataLoader(dataset, shuffle=False, batch_size=self.test_batch_size,
-                                      collate_fn=dataset.collate_fn, pin_memory=False, num_workers=NUM_WORKERS)
-        with torch.no_grad():
-            self.model.eval()
-            submission_predictions = []
-            for feats, masks in tqdm(dataloader):
-                feats = feats.cuda(self.device)
-                masks = masks.cuda(self.device)
-                self.optimizer.zero_grad()
-                predictions = self.model(feats, masks)
-                predictions = torch.argmax(predictions[-1], dim=1)
-                submission_predictions.extend(predictions.detach().cpu().numpy().tolist())
-        return submission_predictions
-
 
 class TrainDataset(tdata.Dataset):
     def __init__(self, feat_files, labels, logits, boundary_region_pad=5):
@@ -239,10 +207,8 @@ class TrainDataset(tdata.Dataset):
         self.n_classes = breakfast.N_MSTCN_CLASSES
 
         boundary_logits = []
-        boundary_masks = []
         for video_logits in logits:
             video_len = len(video_logits)
-            video_masks = np.zeros(shape=video_len)
             video_boundaries = np.zeros(shape=video_len)
             for i in range(video_len - 1):
                 next_logit = video_logits[i+1]
@@ -251,53 +217,48 @@ class TrainDataset(tdata.Dataset):
                     video_boundaries[i] = 1
                     video_boundaries[i+1] = 1
 
-                # set the masks
-                video_masks[max(0, i - boundary_region_pad):i] = 1
-                video_masks[i:min(i+1+boundary_region_pad, video_len)] = 1
-            video_masks[max(0, video_len - boundary_region_pad):video_len] = 1  # pad the end prediction
             boundary_logits.append(video_boundaries)
-            boundary_masks.append(video_masks)
         self.logits = boundary_logits
-        self.prediction_masks = boundary_masks
 
     def __len__(self):
         return len(self.video_feat_files)
 
     def __getitem__(self, idx):
         video_feat_file = self.video_feat_files[idx]
+        coarse_label = os.path.split(video_feat_file)[-1].split('.')[0].split('_')[-1]
+        coarse_logit = breakfast.COARSE_LABELS.index(coarse_label)
+
         features = np.load(video_feat_file)
         logits = self.logits[idx]
-        prediction_masks = self.logits[idx]
-        assert features.shape[1] == len(logits) == len(prediction_masks)
-        features = torch.from_numpy(features)
+        assert features.shape[1] == len(logits)
+        features = features[:, ::SAMPLE_RATE]
+        logits = np.array(logits)[::SAMPLE_RATE]
+        coarse_features = np.zeros(shape=[len(features) + len(breakfast.COARSE_LABELS), features.shape[1]],
+                                   dtype=np.float32)
+        coarse_features[:len(features), :] = features
+        coarse_features[coarse_logit + len(features), :] = 1
+
+        features = torch.from_numpy(coarse_features)
         logits = torch.from_numpy(logits)
-        prediction_masks = torch.from_numpy(prediction_masks)
-        return features, logits, prediction_masks
+        return features, logits
 
     @staticmethod
     def collate_fn(batch):
-        """
-        returns padded_features: B x D x N
-                padded_logits: B x N
-                padded_masks B x 1 x N
-        """
-        features, logits, prediction_masks = zip(*batch)
+        features, logits = zip(*batch)
         max_video_length = 0
         for feature in features:
             max_video_length = max(feature.shape[1], max_video_length)
 
         padded_features = torch.zeros(len(features), IN_CHANNELS, max_video_length, dtype=torch.float)
-        padded_logits = torch.ones(len(features), max_video_length, dtype=torch.long)
-        masks = torch.zeros(len(features), max_video_length, dtype=torch.float)
+        padded_logits = torch.zeros(len(features), max_video_length, dtype=torch.long) * -100
+        masks = torch.zeros(len(features), 1, max_video_length, dtype=torch.float)
 
         for i, feature in enumerate(features):
             video_len = feature.shape[1]
             padded_features[i, :, :video_len] = feature
             padded_logits[i, :video_len] = logits[i]
-            masks[i, :video_len] *= torch.ones_like(prediction_masks[i]) * prediction_masks[i]
-        masks = masks.unsqueeze(dim=1)  # B x 1 x N
+            masks[i, :, :video_len] = torch.ones(1, video_len)
         return padded_features, padded_logits, masks
-
 
 class TestDataset(TrainDataset):
     pass
