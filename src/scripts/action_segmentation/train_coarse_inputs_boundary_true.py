@@ -214,8 +214,8 @@ class Trainer:
         else:
             print('INFO: checkpoint does not exist, continuing...')
 
-    def predict(self, submission_feats):
-        dataset = PredictionDataset(submission_feats)
+    def predict(self, submission_feat_files, submission_timestamps):
+        dataset = PredictionDataset(submission_feat_files, submission_timestamps)
         dataloader = tdata.DataLoader(dataset, shuffle=False, batch_size=self.test_batch_size,
                                       collate_fn=dataset.collate_fn, pin_memory=False, num_workers=NUM_WORKERS)
         with torch.no_grad():
@@ -297,9 +297,11 @@ class TestDataset(TrainDataset):
 
 
 class PredictionDataset(tdata.Dataset):
-    def __init__(self, feat_files):
+    def __init__(self, feat_files, segment_timestamps):
         super(PredictionDataset, self).__init__()
+        assert len(feat_files) == len(segment_timestamps)
         self.video_feat_files = feat_files
+        self.segment_timestamps = segment_timestamps
 
     def __len__(self):
         return len(self.video_feat_files)
@@ -315,6 +317,18 @@ class PredictionDataset(tdata.Dataset):
                                    dtype=np.float32)
         coarse_features[:len(features), :] = features
         coarse_features[coarse_logit + len(features), :] = 1
+        boundary_idx = len(features) + len(breakfast.COARSE_LABELS)
+
+        # mark boundaries
+        video_len = features.shape[1]
+        coarse_features[boundary_idx, 0] = 1
+        coarse_features[boundary_idx, video_len-1] = 1
+        timestamps = self.segment_timestamps[idx]
+        for timestamp in timestamps:
+            timestamp = min(max(0, timestamp), video_len - 1)
+            coarse_features[boundary_idx, timestamp] = 1
+            end = min(max(0, timestamp - 1), video_len - 1)
+            coarse_features[boundary_idx, end] = 1
 
         features = torch.from_numpy(coarse_features)
         return features

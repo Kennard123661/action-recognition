@@ -74,6 +74,17 @@ def get_cls_results(frame_level_predictions, submission_dir, postprocess='midpoi
     return get_submission_accuracy(submission_file)
 
 
+def get_boundary_aware_submission_data():
+    with open(breakfast.SUBMISSION_LABEL_FILE, 'r') as f:
+        submission_timestamps = f.readlines()
+    submission_timestamps = [line.strip().split(' ') for line in submission_timestamps]
+    submission_timestamps = [np.array(timestamps).astype(int) for timestamps in submission_timestamps]
+
+    i3d_files, _, _ = breakfast.get_mstcn_data(split='test')
+    assert len(submission_timestamps) == len(i3d_files)
+    return i3d_files, submission_timestamps
+
+
 def main():
     set_determinstic_mode()
     args = _parse_args()
@@ -82,6 +93,8 @@ def main():
         from scripts.action_segmentation.train_mstcn import Trainer
     elif args.model == 'coarse-inputs':
         from scripts.action_segmentation.train_coarse_inputs import Trainer
+    elif args.model == 'coarse-inputs-boundary-true':
+        from scripts.action_segmentation.train_coarse_inputs_boundary_true import Trainer
     else:
         raise ValueError('no such model')
     submission_dir = os.path.join(SUBMISSION_DIR, args.model, args.config)
@@ -91,8 +104,12 @@ def main():
         raise ValueError(submission_dir + ' exists, please delete if you want a new submission with this name')
 
     trainer = Trainer(args.config, args.device)
-    submission_segments, _, _ = breakfast.get_mstcn_data(split='test')
-    frame_level_predictions = trainer.predict(submission_segments)
+    if 'boundary' in args.model:  # this is for boundary aware models
+        i3d_feats, timestamps = get_boundary_aware_submission_data()
+        frame_level_predictions = trainer.predict(i3d_feats, timestamps)
+    else:
+        submission_segments, _, _ = breakfast.get_mstcn_data(split='test')
+        frame_level_predictions = trainer.predict(submission_segments)
     return get_cls_results(frame_level_predictions, submission_dir)
 
 
