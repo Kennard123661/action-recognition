@@ -2,6 +2,7 @@ import os
 import argparse
 import torch
 import numpy as np
+from tqdm import tqdm
 
 if __name__ == '__main__':
     import sys
@@ -43,9 +44,10 @@ def get_cls_results(frame_level_predictions, submission_dir, postprocess='midpoi
     submission_timestamps = [line.strip().split(' ') for line in submission_timestamps]
     submission_timestamps = [np.array(timestamps).astype(int) for timestamps in submission_timestamps]
 
+    print('INFO: creating segment unaware predictions')
     n_segments = 0
     submission_str = 'Id,Category\n'
-    for i, video_name in enumerate(video_names):
+    for i, video_name in enumerate(tqdm(video_names)):
         video_timestamps = submission_timestamps[i]
         n_gt_segments = len(video_timestamps) - 1
         video_frame_predictions = frame_level_predictions[i]
@@ -53,8 +55,9 @@ def get_cls_results(frame_level_predictions, submission_dir, postprocess='midpoi
         segments = []
         prediction_len = 1
         prev_prediction = video_frame_predictions[i]
-        for j in range(1, video_frame_predictions):
+        for j in range(1, len(video_frame_predictions)):
             curr_prediction = video_frame_predictions[j]
+
             if curr_prediction != prev_prediction:
                 if 0 < prev_prediction < 48:
                     segments.append([prev_prediction, prediction_len])
@@ -67,15 +70,18 @@ def get_cls_results(frame_level_predictions, submission_dir, postprocess='midpoi
         while len(segments) < n_gt_segments:
             segments.append(segments[-1])
             is_selected[:] = 1
-
         segment_lengths = np.array(segments)[:, 1]
         sorted_segment_lengths = np.flip(np.sort(np.unique(np.array(segments)[:, 1])))
         idx = 0
         while np.sum(is_selected).item() < n_gt_segments:
             max_length = sorted_segment_lengths[idx]
-            is_selected[:] = segment_lengths > max_length
+            is_selected = segment_lengths >= max_length
+            idx += 1
 
-        selected_segments = segments[is_selected, :]
+        selected_segments = list()
+        for ii in range(len(segments)):
+            if is_selected[ii]:
+                selected_segments.append(segments[ii])
         if len(selected_segments) > n_gt_segments:
             selected_segments = selected_segments[:n_gt_segments]
         for segment in selected_segments:
