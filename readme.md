@@ -7,6 +7,17 @@ python src/processing/extract_video_lengths.py
 python src/processing/raw_labels_to_hdf5.py
 ```
 
+### Predictions
+To perform predictions, run the following line, the following will produce a prediction stored at 
+`[ROOT_DIR]/submissions/action-segmentation/coarse-inputs-boundary-true/train-longer`, which has 
+`frame-level-predictions`, which contain our temporal segmentation predictions, and `submission.csv`,
+which can be evaluated on the Kaggle leaderboard.
+
+```
+python src/scripts/action_segmentation/create_submission.py -m coarse-inputs-boundary-true -c train-longer -d 0
+```
+
+
 ### Notify Utilities
 Get telegram to notif you. First communicate with botfather and create your bot using `/newbot` command. 
 Update the bot token in `utils/notify_utils.py` and visit the following URL for the chat id 
