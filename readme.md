@@ -35,7 +35,7 @@ First setup your repository like the following:
     - unaware-submissions
 ```
 Then go to `[PROJECT_DIR]/src/config.py` and add your `[PROJECT_ROOT_DIR]` to `_POSSIBLE_ROOT_DIRS`. The Google Drive 
-link is [here](`https://drive.google.com/drive/folders/1LoNS6GcMwqdrt3NrgzisRe_7hnDSt2bH?usp=sharing`). 
+link is [here](https://drive.google.com/drive/folders/1LoNS6GcMwqdrt3NrgzisRe_7hnDSt2bH?usp=sharing). 
 
 To download dependencies, simply run `pip install -r requirements.txt` inside the `[PROJECT_DIR]`. We run this in a conda environment with 
 `python==3.7.6`
