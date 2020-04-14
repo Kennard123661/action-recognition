@@ -1,24 +1,90 @@
-# Action Recognition
+# CS5242 Project: Fine-Grained Breakfast Action Recognition
+![imageintro-picture.png](extras/intro-picture.png)
 
-### Preprocessing Breakfast Dataset
+This is the project directory for our CS5242 Project which is a Kaggle competition [here](https://www.kaggle.com/c/cs5242project/leaderboard). 
+We achieve the top performance (first two entries are admins) by adding boundary priors and coarse label priors to I3D features and using
+the implementation of MSTCN. 
 
+![imageintro-picture.png](extras/kaggle-leaderboard.png)
+
+Credits to the authors of MS-TCN:
 ```bash
-python src/processing/extract_video_lengths.py
-python src/processing/raw_labels_to_hdf5.py
+Y. Abu Farha and J. Gall.
+MS-TCN: Multi-Stage Temporal Convolutional Network for Action Segmentation.
+In IEEE Conference on Computer Vision and Pattern Recognition (CVPR), 2019
 ```
 
-### Predictions
+## Setup 
+First setup your repository like the following:
+
+```
+[PROJECT_ROOT_DIR]
+    - [PROJECT_DIR] # this code base
+    - datasets
+        - breakfast
+            -  mstcn  # download from mstcn: https://github.com/yabufarha/ms-tcn
+                - features
+                - groundTruth
+                - mapping.txt
+                - splits
+                - segment-labels  # gdrive
+            - test_segment.txt # gdrive
+            - test-segment-gt.txt # gdrive
+            - splits # gdrive
+    - submissions
+    - unaware-submissions
+```
+Then go to `[PROJECT_DIR]/src/config.py` and add your `[PROJECT_ROOT_DIR]` to `_POSSIBLE_ROOT_DIRS`. The Google Drive 
+link is [here](`https://drive.google.com/drive/folders/1LoNS6GcMwqdrt3NrgzisRe_7hnDSt2bH?usp=sharing`). 
+
+To download dependencies, simply run `pip install -r requirements.txt` inside the `[PROJECT_DIR]`. We run this in a conda environment with 
+`python==3.7.6`
+
+## Training:
+
+To perform training, you can download our config files from our Google Drive link and place it into `[PROJECT_DIR]/configs/`. 
+Then, you can run the following command in `scripts/action-segmentation/`. To train our best model (final submission):
+```
+python src/scripts/action_segmentation/train_coarse_inputs_boundary_true.py -c train-longer -d 0
+```
+
+To train our best coarse label only model (ablation and unaware submission), run:
+```
+python src/scripts/action_segmentation/train_coarse_inputs.py -c bz8-samelr-fmap-128 -d 0
+```
+
+To train our best coarse label + boundary model (ablation), run:
+```
+python src/scripts/action_segmentation/train_coarse_inputs_boundary_true.py -c base -d 0
+```
+
+## Predictions
 To perform predictions, run the following line, the following will produce a prediction stored at 
-`[ROOT_DIR]/submissions/action-segmentation/coarse-inputs-boundary-true/train-longer`, which has 
+`[PROJECT_ROOT_DIR]/submissions/action-segmentation/coarse-inputs-boundary-true/train-longer`, which has 
 `frame-level-predictions`, which contain our temporal segmentation predictions, and `submission.csv`,
-which can be evaluated on the Kaggle leaderboard.
+which can be evaluated on the Kaggle leaderboard. 
+
+Note: if unsure, check how we perform prediction for boundaries, we use the segment timestamps to create boundary logits 
+and do not use actual test labels. But we use test labels to create boundaries during training script just for ease of 
+coding, and cleaner scripts.
 
 ```
 python src/scripts/action_segmentation/create_submission.py -m coarse-inputs-boundary-true -c train-longer -d 0
 ```
 
+For our segment-unaware predictions in `[PROJECT_ROOT_DIR]/unaware-submissions/action-segmentation/coarse-inputs/bz8-samelr-fmap-128`, use
+```
+python src/scripts/action_segmentation/create_submission.py -m coarse-inputs -c bz8-samelr-fmap-128 -d 0
+```
 
-### Notify Utilities
+## Pretrained Models:
+
+Download our pretrained models from the Google Drive links, we only provide models for the training scripts mention above, 
+other models take up too much space. Run the prediction scripts after placing the pretrained models into the 
+`[PROJECT_DIR]/checkpoints/` directory:
+
+## Extras:
+### Notify Utilities:
 Get telegram to notif you. First communicate with botfather and create your bot using `/newbot` command. 
 Update the bot token in `utils/notify_utils.py` and visit the following URL for the chat id 
 after sending one message to your bot.
@@ -28,40 +94,6 @@ https://api.telegram.org/bot<TOKEN>/getUpdates
 ```
 
 Update the chat-id inside `utils/notify_utils.py` as well.
-
-
-## Setting Up
-The directories for our codebase is setup as follows:
-```bash
-[CS5242-PROJECT-DIR]
-    - [CS5242-PROJECT-CODE] # this repository
-    - datasets
-        - breakfast
-            - mstcn  # download from mstcn repository
-                - groundTruth
-                - splits
-                - features
-            - i3d  # provided i3d features
-            - i3d-2048  # i3d features from breakfast dataset 
-            - labels  # labels from breakfast dataset
-            - videos  # videos from breakfast dataset
-            - segment.txt  # download from kaggle
-            - provided-gt  # download from kaggle database
-            - splits # download from kaggle dataset
-        - activitynet
-        - ...
-    - submissions       
-```
-Then, edit the root directory inside of `[CS5242-PROJECT-CODE]/src/config.py`, to link to `[CS5242-PROJECT-DIR]`. You 
-may place `[CS5242-PROJECT-CODE]` in a separate directory.
-
-For the main code, please run the following:
-
-```bash
-conda create -n action-recognition python==3.7.6
-conda activate action-recognition
-pip install -r requirements.txt
-```
 
 ### Downloading Video Codecs
 
@@ -74,7 +106,7 @@ conda install -c conda-forge ffmpeg
 ```
 
 
-#### Kinetics
+### Kinetics
 To download kinetics dataset, create `{DATA_DIR}/kinetics/splits` and place the downloaded `.json` and `.csv` 
 downloaded from [Kinetics-400](https://deepmind.com/research/open-source/kinetics) into the folder.
 
@@ -83,7 +115,7 @@ downloaded from [Kinetics-400](https://deepmind.com/research/open-source/kinetic
 python src/extras/download_kinetics400.py --split {split} 
 ```
 
-#### ActivityNet
+### ActivityNet
 
 To download activity-net 1.3, download `youtube-dl` first:
 ```bash
@@ -96,108 +128,10 @@ cd {DATA_DIR}/activitynet/
 bash ./download-anet13.sh
 ```
 
-### Feature Extraction Libraries
-
-#### Optical Flow + Warp Optical
-
-We use the dense flow script from https://github.com/yjxiong/dense_flow to generate the optical flow for the videos:
+### Other Repositories:
 ```bash
-mkdir src/third_party && cd src/third_party
-wget -O OpenCV-4.1.0.zip wget https://github.com/opencv/opencv/archive/4.1.0.zip 
-unzip OpenCV-4.1.0.zip
-rm OpenCV-4.1.0.zip
-wget -O OpenCV_contrib-4.1.0.zip https://github.com/opencv/opencv_contrib/archive/4.1.0.zip
-unzip OpenCV_contrib-4.1.0.zip
-rm OpenCV_contrib-4.1.0.zip
-
-cd opencv-4.1.0
-mkdir build && cd build
-cmake -DCMAKE_BUILD_TYPE=Release -DWITH_CUDA=ON -DOPENCV_EXTRA_MODULES_PATH=../../opencv_contrib-4.1.0/modules/ -DWITH_TBB=ON -DBUILD_opencv_cnn_3dobj=OFF -DBUILD_opencv_dnn=OFF -DBUILD_opencv_dnn_modern=OFF -DBUILD_opencv_dnns_easily_fooled=OFF ..
-make -j VERBOSE=1
-
-apt-get install libzip-dev
-git clone --recursive https://github.com/yjxiong/dense_flow
-cd dense_flow && mkdir build && cd build
-OpenCV_DIR=../../opencv-4.1.0/build/  cmake ..
-make -j
-```
-
-#### Installing nvidia optical flow directory
-
-First, we install the dependencies for each of the following modules for compiling opencv from source.
-
-```bash
-sudo apt-get install build-essential 
-sudo apt-get install cmake git libgtk2.0-dev pkg-config libavcodec-dev libavformat-dev libswscale-dev
-
-# for images
-sudo apt-get install python3-dev libtbb2 libtbb-dev libjpeg-dev libpng-dev libtiff-dev libdc1394-22-dev
-
-# for videos
-sudo apt-get install libavcodec-dev libavformat-dev libswscale-dev libv4l-dev
-sudo apt-get install libxvidcore-dev libx264-dev
-
-# for GUI
-sudo apt-get install libgtk-3-dev
-
-# for optimization
-sudo apt-get install libatlas-base-dev gfortran pylint
-
-sudo apt-get install cmake-gui
-
-sudo apt-get install gcc-7 g++-7
-```
-
-```bash
-mkdir src/third_party && cd src/third_party
-wget -O OpenCV-4.2.0.zip wget https://github.com/opencv/opencv/archive/4.2.0.zip 
-unzip OpenCV-4.2.0.zip
-rm OpenCV-4.2.0.zip
-wget -O OpenCV_contrib-4.2.0.zip https://github.com/opencv/opencv_contrib/archive/4.2.0.zip
-unzip OpenCV_contrib-4.2.0.zip
-rm OpenCV_contrib-4.2.0.zip
-```
-
-From here, run the cmake-gui and set the source code to 
-`/mnt/Data/cs5242-project/action-recognition/src/third_party/opencv-4.2.0` and the build directory to 
-`/mnt/Data/cs5242-project/action-recognition/src/third_party/opencv-4.2.0/build` and click `Generate`. Then,  
-set `PYTHON3_EXECUTABLE=/home/kennardng/anaconda3/envs/action-recognition/bin/python3`, 
-`PYTHON3_INCLUDE_DIR=/home/kennardng/anaconda3/envs/action-recognition/include/python3.7m`
-`PYTHON3_LIBRARY=/home/kennardng/anaconda3/envs/action-recognition/lib/libpython3.7m.so`
-`PYTHON3_PACKAGES_PATH=/home/kennardng/anaconda3/envs/action-recognition/lib/python3.7/site-packages`
-`OPENCV_EXTRA_MODULES=/mnt/Data/cs5242-project/action-recognition/src/third_party/opencv_contrib-4.2.0/modules`
-`OPENCV_EXTRA_MODULES=/mnt/Data/cs5242-project/action-recognition/src/third_party/opencv_contrib-4.2.0/modules`
-`CMAKE_INSTALL_PREFIX=/home/kennardng/anaconda3/envs/action-recognition/local`. 
-`BUILD_opencv_xfeatures2d=0`
-Don't build xfeatures_2d, we don't need it
-Also, if your compiler is above gcc-8, then there will be some issues, I used `gcc-7` for installation and set
-```bash
-CUDA_HOST_COMPILER=/usr/bin/gcc-7
-```
-Remember to set numpy paths as well
-Then, press `Configure` and `Generate`. Once the scripts are generated, go to `third_party/opencv-4.2.0/build` and 
-use make 
-
-There are some issues during `make install`, refer to [here](https://answers.opencv.org/question/221827/a-installation-problem-of-opencvsolved/)
-
-
-```bash
-CUDA_VISIBLE_DEVICES=0 python src/utils/optical_flow/extract_selflows.py --n_gpu 3 --gpu 0
-CUDA_VISIBLE_DEVICES=1 python src/utils/optical_flow/extract_selflows.py --n_gpu 3 --gpu 1
-CUDA_VISIBLE_DEVICES=3 python src/utils/optical_flow/extract_selflows.py --n_gpu 3 --gpu 2
-```
-
-## Extras
-
-
-
-
-### Exporting Conda environments
-```bash
-# exporting the environment
-conda env export > environment.yml
-
-# installing the new environment.
-conda env create -f environment.yml
+https://github.com/Kennard123661/cs5242-project  # CSNet Pytorch
+https://github.com/lusindazc/CS_5242_projects  # ssdta and misc
+https://github.com/lusindazc/CS_5242_feat  # I3D
 ```
 

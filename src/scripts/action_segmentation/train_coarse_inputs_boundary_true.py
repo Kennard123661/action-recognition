@@ -206,7 +206,7 @@ class Trainer:
         checkpoint_file = os.path.join(self.checkpoint_dir, checkpoint_name + '.pth')
         if os.path.exists(checkpoint_file):
             print('INFO: loading checkpoint {}'.format(checkpoint_file))
-            checkpoint = torch.load(checkpoint_file)
+            checkpoint = torch.load(checkpoint_file, map_location='cpu')
             self.model.load_state_dict(checkpoint['model'])
             self.optimizer.load_state_dict(checkpoint['optim'])
             self.scheduler.load_state_dict(checkpoint['scheduler'])
